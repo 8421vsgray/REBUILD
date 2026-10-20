@@ -211,7 +211,7 @@ def main() -> int:
         "records": records,
     }
     args.output.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-    _write_markdown(args.with_suffix(".md"), payload)
+    _write_markdown(args.output.with_suffix(".md"), payload)
     print(f"records={len(records)}", flush=True)
     return 0
 
