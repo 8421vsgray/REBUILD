@@ -154,6 +154,20 @@ def finalize_run_count(args):
         raise ValueError("num_runs must be positive")
 
 
+def build_experiment_folder_name(args):
+    return "_".join(
+        [
+            args.dataset,
+            "temperature",
+            str(args.temperature),
+            "mismatch_ratio",
+            str(args.m_ratio),
+            "epochs",
+            str(args.epochs),
+        ]
+    )
+
+
 def train_one_time(args, state_logger):
     utils.fix_random_seeds(args.seed)
     device = torch.device(args.device)
@@ -231,6 +245,7 @@ def main(args):
     exp_name = args.output_dir + time.strftime("%Y-%m-%d_%H-%M-%S")
     state_logger = utils.FileLogger(os.path.join(args.output_dir,"log_train.txt"))
     state_logger.write("Experiment name: {}".format(exp_name))
+    state_logger.write("Independent runs: {}".format(args.num_runs))
 
     for t in range(args.num_runs):
         args.train_id = t
@@ -275,16 +290,7 @@ if __name__ == "__main__":
     os.environ["OMP_NUM_THREADS"] = str(args.threads)
     torch.set_num_threads(args.threads)
 
-    folder_name = [
-            args.dataset,
-            "tau",
-            str(args.temperature),
-            "mr",
-            str(args.m_ratio),
-            "ep",
-            str(args.epochs),
-        ]
-    folder_name = "_".join(folder_name)
+    folder_name = build_experiment_folder_name(args)
 
     args.output_dir = os.path.join(args.output_dir, args.dataset, folder_name)
     args.visual_dir = os.path.join(args.output_dir, "visualize")

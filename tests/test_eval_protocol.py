@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import torch
 from torch.utils.data import Dataset
 
-from main_train import build_data_loaders, resolve_batch_sizes
+from main_train import build_data_loaders, build_experiment_folder_name, resolve_batch_sizes
 
 
 class IndexDataset(Dataset):
@@ -70,6 +70,21 @@ class EvaluationProtocolTests(unittest.TestCase):
             resolve_batch_sizes(make_args(batch_size=0), 5, 7)
         with self.assertRaises(ValueError):
             resolve_batch_sizes(make_args(batch_size=4, eval_batch_size=0), 5, 7)
+
+    def test_experiment_folder_uses_explicit_protocol_names(self):
+        args = SimpleNamespace(
+            dataset="Scene15", temperature=0.5, m_ratio=0.8, epochs=200
+        )
+        folder = build_experiment_folder_name(args)
+
+        self.assertEqual(
+            folder,
+            "Scene15_temperature_0.5_mismatch_ratio_0.8_epochs_200",
+        )
+        self.assertNotIn("_cr_", folder)
+        self.assertNotIn("_tau_", folder)
+        self.assertNotIn("_mr_", folder)
+        self.assertNotIn("_ep_", folder)
 
 
 if __name__ == "__main__":
