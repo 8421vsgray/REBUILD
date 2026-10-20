@@ -31,7 +31,8 @@ void quadratic_regularizer_drot_torch_float32(
         float *col_sum_2,
         float *phi1,
         float *phi2,
-        float *aux) {
+        float *aux,
+        bool relative_stopping) {
     
     float step_size, objective;
     int n_iters, row_size, col_size, mat_size;
@@ -74,17 +75,18 @@ void quadratic_regularizer_drot_torch_float32(
             c, p, q, n_rows, n_cols, step_size, scale, r_weight,
             max_iters, eps, work_size_update_x, x, a, row_sum,
             row_sum_1, row_sum_2, b, col_sum, col_sum_1, col_sum_2,
-            phi1, phi2, aux, &n_iters, &objective);
+            phi1, phi2, aux, &n_iters, &objective, relative_stopping);
 }
 
-torch::Tensor quadratic_drot_cuda(
+torch::Tensor quadratic_drot_cuda_impl(
     torch::Tensor c,
     torch::Tensor p,
     torch::Tensor q,
     float rho,
     float r_weight,
     int max_iters,
-    float eps) {
+    float eps,
+    bool relative_stopping) {
     
     const int n_rows = (int) p.numel();
     const int n_cols = (int) q.numel();
@@ -141,8 +143,33 @@ torch::Tensor quadratic_drot_cuda(
         col_sum_2.data_ptr<float>(),
         phi1.data_ptr<float>(),
         phi2.data_ptr<float>(),
-        aux.data_ptr<float>());
+        aux.data_ptr<float>(),
+        relative_stopping);
 
     // return transportation plan
     return x;
+}
+
+torch::Tensor quadratic_drot_cuda(
+    torch::Tensor c,
+    torch::Tensor p,
+    torch::Tensor q,
+    float rho,
+    float r_weight,
+    int max_iters,
+    float eps) {
+    return quadratic_drot_cuda_impl(
+        c, p, q, rho, r_weight, max_iters, eps, false);
+}
+
+torch::Tensor quadratic_drot_relative_cuda(
+    torch::Tensor c,
+    torch::Tensor p,
+    torch::Tensor q,
+    float rho,
+    float r_weight,
+    int max_iters,
+    float eps) {
+    return quadratic_drot_cuda_impl(
+        c, p, q, rho, r_weight, max_iters, eps, true);
 }

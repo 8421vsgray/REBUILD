@@ -13,6 +13,9 @@ class _FakeDrot:
         self.calls.append((cost, p, q, rho, r_weight, max_iter, eps))
         return q[:, None] * p[None, :]
 
+    def quadratic_drot_relative(self, cost, p, q, rho, r_weight, max_iter, eps):
+        return self.quadratic_drot(cost, p, q, rho, r_weight, max_iter, eps)
+
 
 class DrotAdapterTests(unittest.TestCase):
     def test_candidate_mapping_matches_square_euclidean_scaling(self):

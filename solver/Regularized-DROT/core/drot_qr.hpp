@@ -182,7 +182,8 @@ void quadratic_regularizer_drot(
         T *phi2,
         T *aux,
         int *_n_iter,
-        T *_objective) {
+        T *_objective,
+        bool relative_stopping = false) {
     T _aux[5];
     T residual = 1e9;
     int n_iter = 0;
@@ -216,7 +217,16 @@ void quadratic_regularizer_drot(
 
         if (n_iter % 2 == 0) {
             cudaMemcpy(_aux, aux, 5 * sizeof(T), cudaMemcpyDeviceToHost);
-            residual = sqrt(_aux[2] + _aux[3]);
+            if (relative_stopping) {
+                // REBUILD uses uniform marginals. The L2 marginal residual
+                // bounds the maximum relative marginal error after scaling
+                // by the inverse target marginal.
+                const T row_relative = T(n_rows) * sqrt(max(_aux[2], T(0)));
+                const T col_relative = T(n_cols) * sqrt(max(_aux[3], T(0)));
+                residual = max(row_relative, col_relative);
+            } else {
+                residual = sqrt(_aux[2] + _aux[3]);
+            }
             *_objective = _aux[0];
             // aux[0]: objective value, aux[1]: sum of matrix X
             // aux[2]: row residual,    aux[3]: col residual

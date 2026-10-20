@@ -218,7 +218,9 @@ class DrotEuclideanProjector(TransportProjector):
 
         try:
             inputs = prepare_drot_inputs(candidate, row_marginal, col_marginal)
-            plan = self._backend.quadratic_drot(
+            # REBUILD's eps is a relative marginal tolerance in this explicit
+            # adapter path. The upstream API remains available unchanged.
+            plan = self._backend.quadratic_drot_relative(
                 inputs.cost,
                 inputs.col_marginal,
                 inputs.row_marginal,
