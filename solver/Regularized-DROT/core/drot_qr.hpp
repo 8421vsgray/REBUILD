@@ -215,7 +215,9 @@ void quadratic_regularizer_drot(
                 aux
         );
 
-        if (n_iter % 2 == 0) {
+        // Check marginal residuals every eight updates to reduce host-device
+        // synchronization while retaining the final adapter validation.
+        if (n_iter % 8 == 0) {
             cudaMemcpy(_aux, aux, 5 * sizeof(T), cudaMemcpyDeviceToHost);
             if (relative_stopping) {
                 // REBUILD uses uniform marginals. The L2 marginal residual
