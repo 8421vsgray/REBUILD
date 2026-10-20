@@ -5,7 +5,8 @@
 
 ## 数据与采样
 
-- 训练集和评估集使用同一批直推式聚类样本；是否有特征污染由数据加载配置决定。
+- REBUILD 只研究 Noisy Correspondence（NC）；训练集和评估集使用同一批经过 MR 置换与标准化的直推式聚类样本。
+- REBUILD 不支持 Corruption Ratio（CR）特征损坏，不添加训练专用高斯特征噪声，也不在评估阶段恢复 MR=0 数据。
 - 训练和评估分别创建 `RandomSampler`，二者采样器独立。
 - 两个 DataLoader 均使用 `drop_last=False`，因此最后一个不足整批的 batch 仍会被评估。
 - 评估结果按数据集样本索引写回全局特征与标签数组，不能按 batch 位置覆盖。
@@ -26,10 +27,10 @@
 正式实验至少保存：
 
 - 实际训练和评估 batch size；
-- 数据集、视图顺序、MR/CR、随机种子；
+- 数据集、视图顺序、MR、随机种子和实际输入维度；
 - Git Commit SHA 与工作区状态；
 - 评估采样方式、K-means 随机状态和各项原始指标。
 
 ## 当前阶段的边界
 
-本协议提交只修复评估 batch size 的显式配置和样本覆盖测试，不移除 CorreGen 的 Sinkhorn、Partial OT 或 GMM。后续算法迁移必须使用独立 Commit，并在完成数值测试后更新本文档。
+当前协议只保留 MR 作为数据扰乱变量。Sinkhorn、Partial OT 和 GMM 仍属于尚未完成的独立算法迁移任务，不能从本协议文字推断它们已经删除。
