@@ -38,6 +38,12 @@ def get_args_parser():
 
     # training setting
     parser.add_argument("--batch_size", type=int, default=256, help="batch size per GPU")
+    parser.add_argument(
+        "--eval_batch_size",
+        type=int,
+        default=None,
+        help="evaluation batch size; defaults to batch_size",
+    )
     parser.add_argument("--epochs", type=int, default=200)
     parser.add_argument("--warmup_epochs", type=int, default=20, help="epochs to warmup learning rate")
     parser.add_argument("--data_norm",type=str,default="standard",choices=["standard", "min-max", "l2-norm"])
@@ -78,6 +84,52 @@ def get_args_parser():
     return parser
 
 
+def resolve_batch_sizes(args, n_train, n_test):
+    """Resolve effective train/evaluation batch sizes without dropping samples."""
+    if n_train <= 0 or n_test <= 0:
+        raise ValueError("training and evaluation datasets must be non-empty")
+    if args.batch_size <= 0:
+        raise ValueError("batch_size must be positive")
+
+    eval_batch_size = args.eval_batch_size
+    if eval_batch_size is None:
+        eval_batch_size = args.batch_size
+    if eval_batch_size <= 0:
+        raise ValueError("eval_batch_size must be positive")
+
+    return min(args.batch_size, n_train), min(eval_batch_size, n_test)
+
+
+def build_data_loaders(dataset_train, dataset_test, args):
+    """Build independent random-sampler loaders for training and evaluation."""
+    train_batch_size, eval_batch_size = resolve_batch_sizes(
+        args, len(dataset_train), len(dataset_test)
+    )
+    args.batch_size = train_batch_size
+    args.eval_batch_size = eval_batch_size
+
+    sampler_train = torch.utils.data.RandomSampler(dataset_train)
+    sampler_test = torch.utils.data.RandomSampler(dataset_test)
+
+    data_loader_train = torch.utils.data.DataLoader(
+        dataset_train,
+        sampler=sampler_train,
+        batch_size=train_batch_size,
+        num_workers=args.num_workers,
+        pin_memory=args.pin_mem,
+        drop_last=False,
+    )
+    data_loader_test = torch.utils.data.DataLoader(
+        dataset_test,
+        sampler=sampler_test,
+        batch_size=eval_batch_size,
+        num_workers=args.num_workers,
+        pin_memory=args.pin_mem,
+        drop_last=False,
+    )
+    return data_loader_train, data_loader_test
+
+
 def train_one_time(args, state_logger):
     utils.fix_random_seeds(args.seed)
     device = torch.device(args.device)
@@ -87,27 +139,8 @@ def train_one_time(args, state_logger):
     args.n_sample_test = len(dataset_test)
 
 
-    sampler_train = torch.utils.data.RandomSampler(dataset_train)
-    sampler_test = torch.utils.data.RandomSampler(dataset_test)
-
-    if args.batch_size > len(sampler_train):
-        args.batch_size = len(sampler_train)
-
-    data_loader_train = torch.utils.data.DataLoader(
-        dataset_train,
-        sampler=sampler_train,
-        batch_size=args.batch_size,
-        num_workers=args.num_workers,
-        pin_memory=args.pin_mem,
-        drop_last=False,
-    )
-    data_loader_test = torch.utils.data.DataLoader(
-        dataset_test,
-        sampler=sampler_test,
-        batch_size=512,
-        num_workers=args.num_workers,
-        pin_memory=args.pin_mem,
-        drop_last=False,
+    data_loader_train, data_loader_test = build_data_loaders(
+        dataset_train, dataset_test, args
     )
 
     model = OursModel(
@@ -128,7 +161,8 @@ def train_one_time(args, state_logger):
 
     if args.train_id == 0:
         print("job dir: {}".format(os.path.dirname(os.path.realpath(__file__))))
-        state_logger.write("Batch size: {}".format(args.batch_size))
+        state_logger.write("Train batch size: {}".format(args.batch_size))
+        state_logger.write("Eval batch size: {}".format(args.eval_batch_size))
         state_logger.write("Start time: {}".format(datetime.datetime.now().strftime("%Y-%m-%d %H:%M")))
         state_logger.write("Train parameters: {}".format(args).replace(", ", ",\n"))
     state_logger.write("\n>> Start training {}-th initial, seed: {},".format(args.train_id, args.seed))
