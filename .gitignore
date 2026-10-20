@@ -16,3 +16,8 @@ checkpoints/
 .venv/
 venv/
 .env
+
+# Generated third-party CUDA build and offline validation artifacts
+.artifacts/
+solver/Regularized-DROT/pytorch/build/
+solver/Regularized-DROT/pytorch/*.so
