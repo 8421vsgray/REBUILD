@@ -206,3 +206,27 @@ Not yet verified:
 - DROT compilation and numerical equivalence to Euclidean projection;
 - GW gradient and pseudo-label tests;
 - removal of Sinkhorn/Partial OT/GMM and two-stage training integration.
+
+## 2026-10-20 — Stage 3A: standalone GW+DROT pseudo-label generation
+
+Completed:
+
+- added an independent `pseudolabel.gw` generator with relation construction,
+  finite GW updates, diagonal initialization, and explicit DROT projection;
+- implemented independent `P12 = GW(p[0], z_t[1])` and
+  `P21 = GW(p[1], z_t[0])` directions;
+- added explicit projection diagnostics, feasibility revalidation, and failure
+  propagation without Newton, Sinkhorn, Partial OT, or diagonal fallback;
+- made the adapter load the pinned `reg_drot` extension from the repository's
+  third-party build directory when it is not installed in site-packages;
+- added a real Scene15 B=512 standalone validation tool and report.
+
+Validation:
+
+- Stage 3A generator tests: 11/11 PASS;
+- full repository regression suite: 45/45 PASS;
+- DROT versus CVXPY: B=2/4/8/16/32, 20/20 cases PASS;
+- real Scene15 B=512 bidirectional generation: PASS for feasibility and
+  execution; total three-step bidirectional projection time 6.929 seconds;
+- large-scale DROT optimality certificate at B=512: UNVERIFIED;
+- training-loop integration: intentionally not started.

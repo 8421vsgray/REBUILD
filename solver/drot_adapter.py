@@ -6,6 +6,9 @@ the caller before a plan is used for supervision.
 """
 
 from dataclasses import dataclass
+import importlib
+from pathlib import Path
+import sys
 from typing import Any, Optional
 
 import torch
@@ -94,6 +97,29 @@ def _diagnostics_for_status(
     )
 
 
+def _load_reg_drot() -> Any:
+    """Load the pinned extension from the REBUILD third-party directory.
+
+    The extension is built against the active PyTorch environment and is not
+    installed as a system package. Importing ``torch`` above loads its shared
+    libraries; adding only the pinned extension directory keeps the loader
+    explicit without modifying the third-party source or global driver links.
+    """
+    try:
+        return importlib.import_module("reg_drot")
+    except (ImportError, OSError) as first_error:
+        extension_dir = Path(__file__).resolve().parent / "Regularized-DROT" / "pytorch"
+        if not extension_dir.is_dir():
+            raise first_error
+        extension_path = str(extension_dir)
+        sys.path.insert(0, extension_path)
+        try:
+            return importlib.import_module("reg_drot")
+        finally:
+            if sys.path and sys.path[0] == extension_path:
+                sys.path.pop(0)
+
+
 class DrotEuclideanProjector(TransportProjector):
     """Regularized-DROT backend for the REBUILD Euclidean projection contract."""
 
@@ -125,9 +151,7 @@ class DrotEuclideanProjector(TransportProjector):
         self._backend_error = None
         if backend is None:
             try:
-                import reg_drot
-
-                self._backend = reg_drot
+                self._backend = _load_reg_drot()
             except (ImportError, OSError) as error:
                 self._backend_error = error
 
