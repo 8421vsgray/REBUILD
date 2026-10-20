@@ -6,14 +6,32 @@ import torch
 from scipy import sparse
 
 
+def _select_views(raw_views, args, default_indices):
+    view_indices = getattr(args, "view_indices", None)
+    if view_indices is None:
+        view_indices = default_indices
+    if len(view_indices) != args.n_views:
+        raise ValueError(
+            "view_indices length {} does not match n_views {}".format(
+                len(view_indices), args.n_views
+            )
+        )
+    if any(index < 0 or index >= len(raw_views) for index in view_indices):
+        raise ValueError("view_indices contains an index outside the dataset views")
+    return [np.asarray(raw_views[index]).copy() for index in view_indices]
+
+
 def load_mat(args):
     data_X = []
     label_y = None
 
     if args.dataset == "LandUse21":
         mat = sio.loadmat(os.path.join(args.data_path, "LandUse_21.mat"))
-        data_X.append(sparse.csr_matrix(mat["X"][0, 1]).toarray())
-        data_X.append(sparse.csr_matrix(mat["X"][0, 2]).toarray())
+        raw_views = [
+            sparse.csr_matrix(mat["X"][0, 1]).toarray(),
+            sparse.csr_matrix(mat["X"][0, 2]).toarray(),
+        ]
+        data_X = _select_views(raw_views, args, [0, 1])
         label_y = np.squeeze(mat["Y"]).astype("int")
 
     elif args.dataset == "Caltech101":
@@ -21,8 +39,7 @@ def load_mat(args):
             os.path.join(args.data_path, "2view-caltech101-8677sample.mat")
         )
         X = mat["X"][0]
-        data_X.append(X[0].T)
-        data_X.append(X[1].T)
+        data_X = _select_views([X[0].T, X[1].T], args, [0, 1])
         label_y = np.squeeze(mat["gt"]) - 1
 
     elif args.dataset == 'Animal':
@@ -30,28 +47,28 @@ def load_mat(args):
             os.path.join(args.data_path, 'AWA-7view-10158sample.mat')
         )
         label_y = np.squeeze(mat['gt'])
-        data_X.append(mat['X'][0][6].T)
-        data_X.append(mat['X'][0][5].T)
+        data_X = _select_views(
+            [mat['X'][0][6].T, mat['X'][0][5].T], args, [0, 1]
+        )
 
     elif args.dataset == "umpc_food101":
         mat = sio.loadmat(os.path.join(args.data_path, "umpc_food101.mat"))
         img_features = mat["img_features"].astype(np.float32)
         txt_features = mat["txt_features"].astype(np.float32)
         label_y = np.squeeze(mat["labels"])
-        data_X.append(img_features)
-        data_X.append(txt_features)
+        data_X = _select_views([img_features, txt_features], args, [0, 1])
 
     elif args.dataset == "Scene15":
         mat = sio.loadmat(os.path.join(args.data_path, "Scene_15.mat"))
         X = mat["X"][0]
-        data_X.append(X[1].astype("float32"))
-        data_X.append(X[0].astype("float32"))
+        data_X = _select_views(
+            [X[0].astype("float32"), X[1].astype("float32")], args, [1, 0]
+        )
         label_y = np.squeeze(mat["Y"])
 
     elif args.dataset == "XMediaNet":
         mat = sio.loadmat(os.path.join(args.data_path, "xmedia_deep_2_view.mat"))
-        data_X.append(mat['Img'])
-        data_X.append(mat['Txt'])
+        data_X = _select_views([mat['Img'], mat['Txt']], args, [0, 1])
         label_y = np.squeeze(mat['label'])
     else:
         raise KeyError(f"Unknown Dataset {args.dataset}")
@@ -94,6 +111,16 @@ def load_mat(args):
 
 def load_dataset(args):
     data, label1, label2, id1, id2, is_align, raw_data, raw_label = load_mat(args)
+    encoder_dim = getattr(args, "encoder_dim", None)
+    if encoder_dim:
+        expected_dimensions = [int(view_layers[0]) for view_layers in encoder_dim]
+        actual_dimensions = [view.shape[1] for view in data]
+        if expected_dimensions != actual_dimensions:
+            raise ValueError(
+                "encoder_dim input dimensions {} do not match loaded views {}".format(
+                    expected_dimensions, actual_dimensions
+                )
+            )
     train_dataset = MultiviewDataset(args.n_views, data, label1, label2, id1, id2, is_align)
     test_dataset = MultiviewDataset(args.n_views, data, label1, label2, id1, id2, is_align)
     return train_dataset, test_dataset

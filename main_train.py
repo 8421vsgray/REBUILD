@@ -6,6 +6,7 @@ import time
 import datetime
 import warnings
 import copy
+import uuid
 
 import numpy as np
 import torch
@@ -18,6 +19,85 @@ from model import CorreGenBaselineModel
 warnings.filterwarnings("ignore")
 
 MAX_FORMAL_BATCH_SIZE = 512
+SUPPORTED_CONFIG_FIELDS = {
+    "algorithm",
+    "batch_size",
+    "beta",
+    "blr",
+    "config_version",
+    "data_norm",
+    "data_path",
+    "dataset",
+    "diagonal_epochs",
+    "device",
+    "drop_rate",
+    "embed_dim",
+    "encoder_dim",
+    "epochs",
+    "eval_batch_size",
+    "init",
+    "lr",
+    "m",
+    "m_ratio",
+    "min_blr",
+    "min_lr",
+    "momentum",
+    "n_classes",
+    "n_views",
+    "num_runs",
+    "num_workers",
+    "output_dir",
+    "p",
+    "pin_mem",
+    "print_freq",
+    "reg",
+    "rho",
+    "save_ckpt",
+    "seed",
+    "solver",
+    "start_epoch",
+    "start_guide_epoch",
+    "start_rectify_epoch",
+    "step_size",
+    "steps",
+    "temperature",
+    "threads",
+    "train_time",
+    "view_indices",
+    "warmup_epochs",
+    "weight_decay",
+}
+SOLVER_CONFIG_FIELDS = {"backend", "rho", "eps", "max_iter"}
+STANDARD_CONFIG_REQUIRED_FIELDS = {
+    "algorithm",
+    "dataset",
+    "data_path",
+    "data_norm",
+    "view_indices",
+    "n_views",
+    "n_classes",
+    "encoder_dim",
+    "batch_size",
+    "eval_batch_size",
+    "epochs",
+    "warmup_epochs",
+    "diagonal_epochs",
+    "blr",
+    "min_blr",
+    "weight_decay",
+    "momentum",
+    "temperature",
+    "drop_rate",
+    "m_ratio",
+    "num_runs",
+    "device",
+    "seed",
+    "output_dir",
+    "init",
+    "steps",
+    "step_size",
+    "solver",
+}
 
 
 def get_args_parser():
@@ -48,6 +128,8 @@ def get_args_parser():
     )
     parser.add_argument("--epochs", type=int, default=200)
     parser.add_argument("--warmup_epochs", type=int, default=20, help="epochs to warmup learning rate")
+    parser.add_argument("--blr", type=float, default=5.0e-4)
+    parser.add_argument("--min_blr", type=float, default=5.0e-4)
     parser.add_argument("--data_norm",type=str,default="standard",choices=["standard", "min-max", "l2-norm"])
     parser.add_argument("--num_runs", type=int, default=None)
     parser.add_argument("--threads", type=int, default=8, help="number of threads for torch")
@@ -82,6 +164,16 @@ def get_args_parser():
     parser.add_argument("--m_ratio", type=float, default=0.0)
     parser.add_argument("--seed", default=None, type=int)
     parser.add_argument("--save_ckpt", action="store_true")
+    parser.add_argument(
+        "--algorithm",
+        default="corregen_baseline",
+        choices=["corregen_baseline", "stride_gw"],
+    )
+    parser.add_argument(
+        "--validate_config",
+        action="store_true",
+        help="validate and print a YAML configuration without starting training",
+    )
     return parser
 
 
@@ -141,20 +233,134 @@ def build_data_loaders(dataset_train, dataset_test, args):
     return data_loader_train, data_loader_test
 
 
+def _is_integer(value):
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _validate_standard_config(configs):
+    missing = sorted(STANDARD_CONFIG_REQUIRED_FIELDS.difference(configs))
+    if missing:
+        raise ValueError(
+            "Standard REBUILD YAML is missing required field(s): {}".format(
+                ", ".join(missing)
+            )
+        )
+
+    n_views = configs["n_views"]
+    if not _is_integer(n_views) or n_views <= 0:
+        raise ValueError("n_views must be a positive integer")
+
+    view_indices = configs["view_indices"]
+    if (
+        not isinstance(view_indices, list)
+        or len(view_indices) != n_views
+        or any(not _is_integer(index) or index < 0 for index in view_indices)
+        or len(set(view_indices)) != len(view_indices)
+    ):
+        raise ValueError("view_indices must be a unique list of non-negative integers")
+
+    encoder_dim = configs["encoder_dim"]
+    if (
+        not isinstance(encoder_dim, list)
+        or len(encoder_dim) != n_views
+        or any(
+            not isinstance(view_layers, list)
+            or len(view_layers) < 2
+            or not _is_integer(view_layers[0])
+            or view_layers[0] <= 0
+            for view_layers in encoder_dim
+        )
+    ):
+        raise ValueError("encoder_dim must provide one positive input dimension per view")
+
+    if configs["data_norm"] not in {"standard", "min-max", "l2-norm"}:
+        raise ValueError("data_norm must be standard, min-max or l2-norm")
+    if (
+        not _is_integer(configs["batch_size"])
+        or not 0 < configs["batch_size"] <= MAX_FORMAL_BATCH_SIZE
+    ):
+        raise ValueError("formal batch_size must be an integer in [1, 512]")
+    if "eval_batch_size" in configs and (
+        not _is_integer(configs["eval_batch_size"])
+        or not 0 < configs["eval_batch_size"] <= MAX_FORMAL_BATCH_SIZE
+    ):
+        raise ValueError("formal eval_batch_size must be an integer in [1, 512]")
+    if not 0.0 <= float(configs["m_ratio"]) <= 1.0:
+        raise ValueError("m_ratio must be in [0, 1]")
+    if configs["init"] != "diagonal":
+        raise ValueError("the current STRIDE configuration requires init=diagonal")
+    if not _is_integer(configs["steps"]) or configs["steps"] <= 0:
+        raise ValueError("steps must be a positive integer")
+    if float(configs["step_size"]) <= 0:
+        raise ValueError("step_size must be positive")
+
+    solver = configs["solver"]
+    if not isinstance(solver, dict):
+        raise ValueError("solver must be a mapping")
+    unknown_solver_fields = sorted(set(solver).difference(SOLVER_CONFIG_FIELDS))
+    if unknown_solver_fields:
+        raise ValueError(
+            "Unknown solver field(s): {}".format(", ".join(unknown_solver_fields))
+        )
+    if solver.get("backend") != "drot":
+        raise ValueError("solver.backend must be drot")
+    if float(solver.get("rho", 0)) <= 0:
+        raise ValueError("solver.rho must be positive")
+    if float(solver.get("eps", 0)) <= 0:
+        raise ValueError("solver.eps must be positive")
+    if not _is_integer(solver.get("max_iter")) or solver["max_iter"] <= 0:
+        raise ValueError("solver.max_iter must be a positive integer")
+
+
+def resolve_config_path(config_file):
+    """Resolve either a repository-relative path or a config basename."""
+    requested = Path(config_file)
+    candidates = [requested]
+    if not requested.is_absolute():
+        candidates.append(Path("config") / requested)
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    raise FileNotFoundError(
+        "Configuration file not found; checked: {}".format(
+            ", ".join(str(candidate) for candidate in candidates)
+        )
+    )
+
+
 def load_config_file(config_path):
-    """Load YAML and reject removed experiment dimensions explicitly."""
+    """Load and validate a REBUILD YAML configuration."""
     with open(config_path, encoding="utf-8") as config_stream:
-        configs = yaml.load(config_stream, Loader=yaml.FullLoader) or {}
+        configs = yaml.safe_load(config_stream) or {}
+    if not isinstance(configs, dict):
+        raise ValueError("YAML configuration must be a mapping")
     removed_fields = sorted(set(configs).intersection({"c_ratio"}))
     if removed_fields:
         fields = ", ".join(removed_fields)
         raise ValueError(
             "Removed configuration field(s): {}. REBUILD is NC-only; use m_ratio.".format(fields)
         )
+    unknown_fields = sorted(set(configs).difference(SUPPORTED_CONFIG_FIELDS))
+    if unknown_fields:
+        raise ValueError(
+            "Unknown configuration field(s): {}".format(", ".join(unknown_fields))
+        )
     if "train_time" in configs:
         if "num_runs" in configs:
             raise ValueError("Use only num_runs; train_time and num_runs cannot both be set")
         configs["num_runs"] = configs.pop("train_time")
+    standard_markers = {"algorithm", "view_indices", "solver", "steps", "step_size"}
+    if standard_markers.intersection(configs):
+        _validate_standard_config(configs)
+        if configs.get("diagonal_epochs") is not None:
+            if (
+                "start_rectify_epoch" in configs
+                and configs["start_rectify_epoch"] != configs["diagonal_epochs"]
+            ):
+                raise ValueError(
+                    "diagonal_epochs and start_rectify_epoch cannot disagree"
+                )
+            configs.setdefault("start_rectify_epoch", configs["diagonal_epochs"])
     return configs
 
 
@@ -164,6 +370,31 @@ def finalize_run_count(args):
         args.num_runs = 5
     if args.num_runs <= 0:
         raise ValueError("num_runs must be positive")
+
+
+def build_run_output_dir(experiment_dir, run_id, seed):
+    """Return a unique per-run directory and reject accidental reuse."""
+    seed_label = "seed_none" if seed is None else "seed_{}".format(seed)
+    run_dir = Path(experiment_dir) / run_id / seed_label
+    if run_dir.exists():
+        raise FileExistsError(
+            "Run output already exists; choose a new run_id: {}".format(run_dir)
+        )
+    return run_dir
+
+
+def write_config_snapshot(args):
+    """Persist the effective configuration without silently overwriting it."""
+    snapshot_path = Path(args.output_dir) / "config_effective.yaml"
+    snapshot = yaml.safe_dump(vars(args), sort_keys=True)
+    if snapshot_path.exists():
+        existing = snapshot_path.read_text(encoding="utf-8")
+        if existing != snapshot:
+            raise FileExistsError(
+                "Existing config snapshot differs: {}".format(snapshot_path)
+            )
+        return
+    snapshot_path.write_text(snapshot, encoding="utf-8")
 
 
 def build_experiment_folder_name(args):
@@ -254,15 +485,37 @@ def main(args):
     if args.lr is None:  # only base_lr is specified
         args.lr = args.blr * batch_scale
         args.min_lr = args.min_blr * batch_scale
-    exp_name = args.output_dir + time.strftime("%Y-%m-%d_%H-%M-%S")
-    state_logger = utils.FileLogger(os.path.join(args.output_dir,"log_train.txt"))
-    state_logger.write("Experiment name: {}".format(exp_name))
-    state_logger.write("Independent runs: {}".format(args.num_runs))
+    experiment_dir = Path(args.output_dir)
+    run_id = "run_{}_{}".format(
+        datetime.datetime.now().strftime("%Y%m%d_%H%M%S"),
+        uuid.uuid4().hex[:8],
+    )
+    run_root = experiment_dir / run_id
+    if run_root.exists():
+        raise FileExistsError(
+            "Run root already exists; refusing to overwrite: {}".format(run_root)
+        )
+    run_root.mkdir(parents=False)
+    summary_logger = utils.FileLogger(str(run_root / "log_summary.txt"))
+    summary_logger.write("Experiment run id: {}".format(run_id))
+    summary_logger.write("Independent runs: {}".format(args.num_runs))
 
     for t in range(args.num_runs):
-        args.train_id = t
-        train_state_dict = train_one_time(args, state_logger)
-        args.seed = args.seed + 1
+        run_args = copy.deepcopy(args)
+        run_args.train_id = t
+        run_args.seed = None if args.seed is None else args.seed + t
+        run_args.run_id = run_id
+        run_args.output_dir = str(
+            build_run_output_dir(experiment_dir, run_id, run_args.seed)
+        )
+        run_args.visual_dir = os.path.join(run_args.output_dir, "visualize")
+        Path(run_args.output_dir).mkdir(parents=True, exist_ok=False)
+        Path(run_args.visual_dir).mkdir(parents=True, exist_ok=False)
+        write_config_snapshot(run_args)
+        run_logger = utils.FileLogger(
+            os.path.join(run_args.output_dir, "log_train.txt")
+        )
+        train_state_dict = train_one_time(run_args, run_logger)
         for epoch, train_state in train_state_dict.items():
             result_dict.setdefault(epoch, copy.deepcopy(result_avr_def))
             for method, metrics in train_state.items():
@@ -282,10 +535,10 @@ def main(args):
     for epoch, result_avr in result_dict.items():
         print("Epoch {}:".format(epoch))
         kmeans_r = result_avr['k-means']
-        state_logger.write(f"Epoch {epoch}: title,acc,nmi,ari,car-------------")
-        state_logger.write('Average K-means Result   : ACC = {:.2f}({:.2f}) NMI = {:.2f}({:.2f}) ARI = {:.2f}({:.2f}) CAR = {:.2f}({:.2f})'
+        summary_logger.write(f"Epoch {epoch}: title,acc,nmi,ari,car-------------")
+        summary_logger.write('Average K-means Result   : ACC = {:.2f}({:.2f}) NMI = {:.2f}({:.2f}) ARI = {:.2f}({:.2f}) CAR = {:.2f}({:.2f})'
                            .format(*kmeans_r['acc'], *kmeans_r['nmi'], *kmeans_r['ari'], *kmeans_r['car']))
-    state_logger.write("Total training time: {}".format(total_time_str))
+    summary_logger.write("Total training time: {}".format(total_time_str))
 
 
 if __name__ == "__main__":
@@ -293,11 +546,23 @@ if __name__ == "__main__":
     args = args.parse_args()
 
     if args.config_file is not None:
-        configs = load_config_file(os.path.join('./config', args.config_file))
+        config_path = resolve_config_path(args.config_file)
+        configs = load_config_file(config_path)
         args = vars(args)
         args.update(configs)
+        args["config_path"] = str(config_path)
         args = argparse.Namespace(**args)
     finalize_run_count(args)
+
+    if args.validate_config:
+        print(yaml.safe_dump(vars(args), sort_keys=True))
+        raise SystemExit(0)
+    if getattr(args, "algorithm", "corregen_baseline") == "stride_gw":
+        raise RuntimeError(
+            "algorithm=stride_gw is validated but not executable yet: "
+            "the two-stage GW training backend must be integrated before "
+            "formal STRIDE training."
+        )
 
     os.environ["OMP_NUM_THREADS"] = str(args.threads)
     torch.set_num_threads(args.threads)
@@ -310,5 +575,6 @@ if __name__ == "__main__":
     args.embed_dim = args.encoder_dim[0][-1]
     Path(args.output_dir).mkdir(parents=True, exist_ok=True)
     Path(args.visual_dir).mkdir(parents=True, exist_ok=True)
+    write_config_snapshot(args)
 
     main(args)

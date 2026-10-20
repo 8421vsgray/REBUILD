@@ -7,7 +7,7 @@ import tempfile
 import numpy as np
 
 from dataset_loader import load_dataset, load_mat
-from main_train import load_config_file
+from main_train import build_run_output_dir, load_config_file
 
 
 class DataProtocolTests(unittest.TestCase):
@@ -18,14 +18,19 @@ class DataProtocolTests(unittest.TestCase):
             raise unittest.SkipTest("Scene15 fixture is not available")
 
     @staticmethod
-    def make_args(m_ratio=0.2):
-        return SimpleNamespace(
+    def make_args(m_ratio=0.2, view_indices=None, encoder_dim=None):
+        args = SimpleNamespace(
             dataset="Scene15",
             data_path=DataProtocolTests.data_path,
             data_norm="standard",
             n_views=2,
             m_ratio=m_ratio,
         )
+        if view_indices is not None:
+            args.view_indices = view_indices
+        if encoder_dim is not None:
+            args.encoder_dim = encoder_dim
+        return args
 
     def test_mismatch_construction_is_repeatable_and_indexed(self):
         args = self.make_args()
@@ -75,6 +80,19 @@ class DataProtocolTests(unittest.TestCase):
         self.assertTrue(np.array_equal(train_dataset.id2, test_dataset.id2))
         self.assertTrue(np.array_equal(train_dataset.label2, test_dataset.label2))
 
+    def test_explicit_view_indices_preserve_scene15_anchor_order(self):
+        args = self.make_args(view_indices=[1, 0])
+        data, _, _, _, _, _, _, _ = load_mat(args)
+        self.assertEqual([view.shape for view in data], [(4485, 59), (4485, 20)])
+
+    def test_encoder_input_dimensions_are_checked(self):
+        args = self.make_args(
+            view_indices=[1, 0],
+            encoder_dim=[[58, 1024], [20, 1024]],
+        )
+        with self.assertRaisesRegex(ValueError, "encoder_dim input dimensions"):
+            load_dataset(args)
+
     def test_removed_corruption_ratio_config_is_rejected(self):
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as config:
             config.write("c_ratio: 0\nm_ratio: 0.2\n")
@@ -105,6 +123,36 @@ class DataProtocolTests(unittest.TestCase):
                 load_config_file(config_path)
         finally:
             os.unlink(config_path)
+
+    def test_unknown_configuration_fields_are_rejected(self):
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as config:
+            config.write("m_ratio: 0.2\nmisspelled_batch_size: 512\n")
+            config_path = config.name
+        try:
+            with self.assertRaisesRegex(ValueError, "Unknown configuration field"):
+                load_config_file(config_path)
+        finally:
+            os.unlink(config_path)
+
+    def test_standard_scene15_configuration_is_validated(self):
+        config_path = os.path.join(
+            os.path.dirname(os.path.dirname(__file__)),
+            "config",
+            "Scene15_MR08.yaml",
+        )
+        parsed = load_config_file(config_path)
+        self.assertEqual(parsed["view_indices"], [1, 0])
+        self.assertEqual(parsed["num_runs"], 1)
+        self.assertEqual(parsed["start_rectify_epoch"], 20)
+        self.assertEqual(parsed["solver"]["backend"], "drot")
+
+    def test_run_output_directory_is_seeded_and_non_overwriting(self):
+        with tempfile.TemporaryDirectory() as output_dir:
+            first = build_run_output_dir(output_dir, "run_fixed", 1)
+            first.mkdir(parents=True)
+            with self.assertRaisesRegex(FileExistsError, "already exists"):
+                build_run_output_dir(output_dir, "run_fixed", 1)
+            self.assertTrue(str(first).endswith(os.path.join("run_fixed", "seed_1")))
 
 
 if __name__ == "__main__":

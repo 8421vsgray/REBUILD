@@ -22,6 +22,35 @@ Validation:
   committed;
 - no model math or third-party DROT source was changed by this protocol edit.
 
+## 2026-10-20 — strict YAML-driven configuration
+
+Commit: recorded in Git history after this document is added.
+
+Completed:
+
+- added a standard Scene15 MR=0.8 YAML with explicit view order, phase
+  parameters, GW settings and nested DROT settings;
+- made configuration loading path-aware and switched it to
+  `yaml.safe_load`;
+- rejected unknown top-level and nested solver fields;
+- validated view indices, encoder input dimensions, normalization, MR,
+  batch-size limits, GW parameters and DROT parameters;
+- added explicit effective-configuration snapshot writing and a guard that
+  stops `algorithm: stride_gw` until the two-stage GW backend is integrated;
+- added dataset-loader checks so `view_indices` and `encoder_dim` cannot
+  silently disagree with the loaded data.
+
+Validation:
+
+- full unittest suite passed: 28 tests;
+- standard Scene15 configuration validation passed;
+- `batch_size=512` and `eval_batch_size=512` were confirmed;
+- `seed=1` and `num_runs=1` are explicit in the maintained Scene15 smoke
+  configuration;
+- run outputs are isolated by generated run ID and seed and refuse reuse;
+- no model math, GW formula or DROT kernel was changed by this configuration
+  stage.
+
 ## 2026-10-20 — Stage 0: initialize from CorreGen
 
 Commit: recorded in Git history after this document is added.
