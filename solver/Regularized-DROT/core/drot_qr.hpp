@@ -187,7 +187,7 @@ void quadratic_regularizer_drot(
     T residual = 1e9;
     int n_iter = 0;
     
-    while ((n_iter < max_iters) /*&& (residual > eps)*/) {
+    while (n_iter < max_iters && residual > eps) {
         cudaMemset(aux, 0, 4 * sizeof(T));
         cudaMemset(row_sum_1, 0, n_rows * CEILDIV(n_cols, work_size_update_x) * sizeof(T));
         cudaMemset(col_sum_1, 0, n_cols * CEILDIV(n_rows, UPDATE_X_BLOCK_SIZE_X) * sizeof(T));
