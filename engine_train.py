@@ -71,6 +71,7 @@ def train_one_epoch(
             training_state["dist"] = dist
             external_targets = None
             if is_stride_gw and not training_phase["rectify"]:
+                model._update_target_branch(training_state["mmt"])
                 predictions, target_embeddings = _make_gw_inputs(model, samples)
                 external_targets, gw_diagnostics = generate_bidirectional_gw_targets(
                     predictions,
@@ -92,6 +93,7 @@ def train_one_epoch(
                 training_state,
                 training_phase,
                 external_targets=external_targets,
+                update_target=not (is_stride_gw and not training_phase["rectify"]),
             )
         loss_value = loss.item()
         if not math.isfinite(loss_value):

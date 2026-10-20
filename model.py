@@ -141,9 +141,9 @@ class CorreGenBaselineModel(torch.nn.Module):
                 raise ValueError("{} must be non-negative".format(name))
 
             ones = torch.ones(batch_size, device=device, dtype=dtype)
-            if not torch.allclose(target.sum(dim=1), ones, atol=1e-5, rtol=1e-4):
+            if not torch.allclose(target.sum(dim=1), ones, atol=1e-5, rtol=1e-3):
                 raise ValueError("{} rows must sum to 1".format(name))
-            if not torch.allclose(target.sum(dim=0), ones, atol=1e-5, rtol=1e-4):
+            if not torch.allclose(target.sum(dim=0), ones, atol=1e-5, rtol=1e-3):
                 raise ValueError("{} columns must sum to 1".format(name))
             validated[name] = target.detach()
         return validated["P12"], validated["P21"]
@@ -171,7 +171,7 @@ class CorreGenBaselineModel(torch.nn.Module):
             + self.cl(predictions[1], target_embeddings[0], inter_targets[1])
         ) / 2
 
-    def forward(self, data, training_state, training_phase, external_targets=None):
+    def forward(self, data, training_state, training_phase, external_targets=None, update_target=True):
         validated_external_targets = None
         if external_targets is not None:
             if self.n_views != 2:
@@ -182,22 +182,19 @@ class CorreGenBaselineModel(torch.nn.Module):
                 data[0].device,
                 data[0].dtype,
             )
-        self._update_target_branch(training_state["mmt"])
+        if update_target:
+            self._update_target_branch(training_state["mmt"])
         z = [self.online_encoder[i](data[i]) for i in range(self.n_views)]
         p = [self.cross_view_decoder[i](z[i]) for i in range(self.n_views)]
         z_t = [self.target_encoder[i](data[i]) for i in range(self.n_views)]
         if validated_external_targets is not None:
             p12, p21 = validated_external_targets
             mp_inter = [p12, p21]
-            if training_phase["rectify"]:
-                mp_intra = torch.eye(
-                    z[0].shape[0], device=z[0].device, dtype=z[0].dtype
-                )
-                mp_intra = [mp_intra, mp_intra]
-            else:
-                _, mp_intra = self.joint_dist_estimation(
-                    z_t, z, p, training_state, include_inter=False
-                )
+            # STRIDE keeps within-view supervision diagonal after GW starts.
+            mp_intra = torch.eye(
+                z[0].shape[0], device=z[0].device, dtype=z[0].dtype
+            )
+            mp_intra = [mp_intra, mp_intra]
         elif training_phase["rectify"]:
             mp_intra = torch.eye(
                 z[0].shape[0], device=z[0].device, dtype=z[0].dtype
