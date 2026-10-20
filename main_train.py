@@ -78,7 +78,6 @@ def get_args_parser():
     parser.add_argument("--data_path", type=str, default="./", help="path to your folder of dataset")
     parser.add_argument("--output_dir",type=str,default="output_log_test",help="path where to save, empty for no saving")
     parser.add_argument("--m_ratio", type=float, default=0.0)
-    parser.add_argument("--c_ratio", type=float, default=0.0)
     parser.add_argument("--seed", default=None, type=int)
     parser.add_argument("--save_ckpt", action="store_true")
     return parser
@@ -128,6 +127,19 @@ def build_data_loaders(dataset_train, dataset_test, args):
         drop_last=False,
     )
     return data_loader_train, data_loader_test
+
+
+def load_config_file(config_path):
+    """Load YAML and reject removed experiment dimensions explicitly."""
+    with open(config_path, encoding="utf-8") as config_stream:
+        configs = yaml.load(config_stream, Loader=yaml.FullLoader) or {}
+    removed_fields = sorted(set(configs).intersection({"c_ratio"}))
+    if removed_fields:
+        fields = ", ".join(removed_fields)
+        raise ValueError(
+            "Removed configuration field(s): {}. REBUILD is NC-only; use m_ratio.".format(fields)
+        )
+    return configs
 
 
 def train_one_time(args, state_logger):
@@ -242,12 +254,7 @@ if __name__ == "__main__":
     args = args.parse_args()
 
     if args.config_file is not None:
-        with open(os.path.join('./config',args.config_file)) as f:
-            if hasattr(yaml, "FullLoader"):
-                configs = yaml.load(f.read(), Loader=yaml.FullLoader)
-            else:
-                configs = yaml.load(f.read())
-
+        configs = load_config_file(os.path.join('./config', args.config_file))
         args = vars(args)
         args.update(configs)
         args = argparse.Namespace(**args)
@@ -261,8 +268,6 @@ if __name__ == "__main__":
             str(args.temperature),
             "mr",
             str(args.m_ratio),
-            "cr",
-            str(args.c_ratio),
             "ep",
             str(args.epochs),
         ]

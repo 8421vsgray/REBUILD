@@ -79,48 +79,22 @@ def load_mat(args):
             label_y_view2[inx] = label_y_view2[_inx]
             id2[inx] = id1[_inx]
 
-    noisy_data_X = None
-    if args.c_ratio > 0:
-        noisy_data_X = [data.copy() for data in data_X]
-        N = noisy_data_X[0].shape[0]
-        for i in range(args.n_views):
-            inx = np.arange(N)
-            rng.shuffle(inx)
-            inx = inx[0 : int(args.c_ratio * N)]
-            std = np.std(noisy_data_X[i], axis=0)
-            mean = np.mean(noisy_data_X[i], axis=0)
-            noise = np.random.normal(
-                loc=mean,
-                scale=std,
-                size=noisy_data_X[i][inx].shape
-            )
-            noisy_data_X[i][inx] += noise    
-
     if args.data_norm == "standard":
         for i in range(args.n_views):
             data_X[i] = skp.scale(data_X[i])
-            if noisy_data_X is not None:
-                noisy_data_X[i] = skp.scale(noisy_data_X[i])
     elif args.data_norm == "l2-norm":
         for i in range(args.n_views):
             data_X[i] = skp.normalize(data_X[i])
-            if noisy_data_X is not None:
-                noisy_data_X[i] = skp.normalize(noisy_data_X[i])
     elif args.data_norm == "min-max":
         for i in range(args.n_views):
             data_X[i] = skp.minmax_scale(data_X[i])
-            if noisy_data_X is not None:
-                noisy_data_X[i] = skp.minmax_scale(noisy_data_X[i])
 
-    return data_X, noisy_data_X, label_y, label_y_view2, id1, id2, is_align, raw_data, raw_label
+    return data_X, label_y, label_y_view2, id1, id2, is_align, raw_data, raw_label
 
 
 def load_dataset(args):
-    data, noisy_data_X, label1, label2, id1, id2, is_align, raw_data, raw_label = load_mat(args)
-    if noisy_data_X is not None:
-        train_dataset = MultiviewDataset(args.n_views, noisy_data_X, label1, label2, id1, id2, is_align)
-    else:
-        train_dataset = MultiviewDataset(args.n_views, data, label1, label2, id1, id2, is_align)
+    data, label1, label2, id1, id2, is_align, raw_data, raw_label = load_mat(args)
+    train_dataset = MultiviewDataset(args.n_views, data, label1, label2, id1, id2, is_align)
     test_dataset = MultiviewDataset(args.n_views, data, label1, label2, id1, id2, is_align)
     return train_dataset, test_dataset
 
@@ -149,4 +123,3 @@ class MultiviewDataset(torch.utils.data.Dataset):
         id2 = torch.tensor(self.id2[idx], dtype=torch.long)
         label_align = torch.tensor(self.is_align[idx], dtype=torch.long)
         return idx, data, label1, label2, id1, id2, label_align
-
