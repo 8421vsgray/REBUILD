@@ -47,7 +47,7 @@ def get_args_parser():
     parser.add_argument("--epochs", type=int, default=200)
     parser.add_argument("--warmup_epochs", type=int, default=20, help="epochs to warmup learning rate")
     parser.add_argument("--data_norm",type=str,default="standard",choices=["standard", "min-max", "l2-norm"])
-    parser.add_argument("--train_time", type=int, default=5)
+    parser.add_argument("--num_runs", type=int, default=None)
     parser.add_argument("--threads", type=int, default=8, help="number of threads for torch")
     parser.add_argument("--num_workers", default=0, type=int)
 
@@ -139,7 +139,19 @@ def load_config_file(config_path):
         raise ValueError(
             "Removed configuration field(s): {}. REBUILD is NC-only; use m_ratio.".format(fields)
         )
+    if "train_time" in configs:
+        if "num_runs" in configs:
+            raise ValueError("Use only num_runs; train_time and num_runs cannot both be set")
+        configs["num_runs"] = configs.pop("train_time")
     return configs
+
+
+def finalize_run_count(args):
+    """Apply the stable default after YAML and CLI values have been merged."""
+    if args.num_runs is None:
+        args.num_runs = 5
+    if args.num_runs <= 0:
+        raise ValueError("num_runs must be positive")
 
 
 def train_one_time(args, state_logger):
@@ -220,7 +232,7 @@ def main(args):
     state_logger = utils.FileLogger(os.path.join(args.output_dir,"log_train.txt"))
     state_logger.write("Experiment name: {}".format(exp_name))
 
-    for t in range(args.train_time):
+    for t in range(args.num_runs):
         args.train_id = t
         train_state_dict = train_one_time(args, state_logger)
         args.seed = args.seed + 1
@@ -258,6 +270,7 @@ if __name__ == "__main__":
         args = vars(args)
         args.update(configs)
         args = argparse.Namespace(**args)
+    finalize_run_count(args)
 
     os.environ["OMP_NUM_THREADS"] = str(args.threads)
     torch.set_num_threads(args.threads)

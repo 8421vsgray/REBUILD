@@ -85,6 +85,27 @@ class DataProtocolTests(unittest.TestCase):
         finally:
             os.unlink(config_path)
 
+    def test_legacy_train_time_config_is_explicitly_mapped(self):
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as config:
+            config.write("train_time: 7\nm_ratio: 0.2\n")
+            config_path = config.name
+        try:
+            parsed = load_config_file(config_path)
+            self.assertEqual(parsed["num_runs"], 7)
+            self.assertNotIn("train_time", parsed)
+        finally:
+            os.unlink(config_path)
+
+    def test_legacy_and_new_run_count_names_cannot_conflict(self):
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as config:
+            config.write("train_time: 7\nnum_runs: 5\n")
+            config_path = config.name
+        try:
+            with self.assertRaisesRegex(ValueError, "cannot both be set"):
+                load_config_file(config_path)
+        finally:
+            os.unlink(config_path)
+
 
 if __name__ == "__main__":
     unittest.main()
