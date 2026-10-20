@@ -5,6 +5,25 @@ from model import CorreGenBaselineModel
 from torch.utils.data import DataLoader
 from utils import MetricLogger, SmoothedValue ,InfoBuffer
 from evaluation import evaluate, update_infoBuffer
+from pseudolabel.gw import generate_bidirectional_gw_targets, projector_from_solver_config
+
+
+@torch.no_grad()
+def _make_gw_inputs(model: CorreGenBaselineModel, samples):
+    """Build detached online predictions and EMA embeddings for GW labels."""
+    was_training = model.training
+    model.eval()
+    try:
+        online = [model.online_encoder[i](samples[i]) for i in range(model.n_views)]
+        predictions = [
+            model.cross_view_decoder[i](online[i]) for i in range(model.n_views)
+        ]
+        target_embeddings = [
+            model.target_encoder[i](samples[i]) for i in range(model.n_views)
+        ]
+    finally:
+        model.train(was_training)
+    return predictions, target_embeddings
 
 
 def train_one_epoch(
@@ -17,6 +36,7 @@ def train_one_epoch(
     epoch: int,
     scheduler=None,
     args=None,
+    projector=None,
 ):
     metric_logger = MetricLogger(delimiter="  ")
     metric_logger.add_meter("lr", SmoothedValue(window_size=1, fmt="{value:.6f}"))
@@ -27,7 +47,10 @@ def train_one_epoch(
         data_loader = enumerate(data_loader_train)
 
     training_phase = {"rectify": epoch < args.start_rectify_epoch}
-    training_state = {"mmt": args.momentum, "rho":args.rho, "dist": None}
+    is_stride_gw = getattr(args, "algorithm", "corregen_baseline") == "stride_gw"
+    training_state = {"mmt": args.momentum, "rho": args.rho, "dist": None}
+    if is_stride_gw and projector is None:
+        projector = projector_from_solver_config(args.solver)
     model.train(True)
     optimizer.zero_grad()
     for data_iter_step, (idx, samples, label1, label2, id1, id2, label_align) in data_loader:
@@ -43,10 +66,33 @@ def train_one_epoch(
 
         with torch.autocast("cuda", enabled=False):
             dist = None
-            if epoch > args.start_guide_epoch:
+            if not is_stride_gw and epoch > args.start_guide_epoch:
                 dist = calculate_dist(infolist, samples, idx, args)
             training_state["dist"] = dist
-            loss = model(samples, training_state, training_phase)
+            external_targets = None
+            if is_stride_gw and not training_phase["rectify"]:
+                predictions, target_embeddings = _make_gw_inputs(model, samples)
+                external_targets, gw_diagnostics = generate_bidirectional_gw_targets(
+                    predictions,
+                    target_embeddings,
+                    {
+                        "init": args.init,
+                        "steps": args.steps,
+                        "step_size": args.step_size,
+                    },
+                    projector,
+                )
+                if args.print_this_epoch:
+                    metric_logger.update(
+                        p12_offdiag=gw_diagnostics["P12"]["non_diagonal_mass"],
+                        p21_offdiag=gw_diagnostics["P21"]["non_diagonal_mass"],
+                    )
+            loss = model(
+                samples,
+                training_state,
+                training_phase,
+                external_targets=external_targets,
+            )
         loss_value = loss.item()
         if not math.isfinite(loss_value):
             print("Loss is {}, stopping training".format(loss_value))
@@ -59,9 +105,9 @@ def train_one_epoch(
             metric_logger.update(lr=lr)
             metric_logger.update(loss=loss_value)
 
-    if epoch == args.start_guide_epoch:
+    if not is_stride_gw and epoch == args.start_guide_epoch:
         update_infoBuffer(infolist, model, data_loader_train, device, args, epoch, 'init')
-    elif epoch > args.start_guide_epoch:
+    elif not is_stride_gw and epoch > args.start_guide_epoch:
         update_infoBuffer(infolist, model, data_loader_train, device, args, epoch, 'guide')
 
     if args.print_this_epoch:

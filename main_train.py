@@ -67,7 +67,15 @@ SUPPORTED_CONFIG_FIELDS = {
     "warmup_epochs",
     "weight_decay",
 }
-SOLVER_CONFIG_FIELDS = {"backend", "rho", "eps", "max_iter"}
+SOLVER_CONFIG_FIELDS = {
+    "backend",
+    "rho",
+    "eps",
+    "max_iter",
+    "relative_tol",
+    "absolute_tol",
+    "certificate_tol",
+}
 STANDARD_CONFIG_REQUIRED_FIELDS = {
     "algorithm",
     "dataset",
@@ -302,14 +310,44 @@ def _validate_standard_config(configs):
         raise ValueError(
             "Unknown solver field(s): {}".format(", ".join(unknown_solver_fields))
         )
-    if solver.get("backend") != "drot":
-        raise ValueError("solver.backend must be drot")
-    if float(solver.get("rho", 0)) <= 0:
-        raise ValueError("solver.rho must be positive")
-    if float(solver.get("eps", 0)) <= 0:
-        raise ValueError("solver.eps must be positive")
-    if not _is_integer(solver.get("max_iter")) or solver["max_iter"] <= 0:
-        raise ValueError("solver.max_iter must be a positive integer")
+    backend = solver.get("backend")
+    if backend == "drot":
+        required = {"backend", "rho", "eps", "max_iter"}
+        missing_solver_fields = sorted(required.difference(solver))
+        if missing_solver_fields:
+            raise ValueError(
+                "DROT solver config is missing: {}".format(
+                    ", ".join(missing_solver_fields)
+                )
+            )
+        if float(solver["rho"]) <= 0:
+            raise ValueError("solver.rho must be positive")
+        if float(solver["eps"]) <= 0:
+            raise ValueError("solver.eps must be positive")
+        if not _is_integer(solver["max_iter"]) or solver["max_iter"] <= 0:
+            raise ValueError("solver.max_iter must be a positive integer")
+    elif backend == "fastnewton":
+        if {"rho", "eps"}.intersection(solver):
+            raise ValueError(
+                "FASTNEWTON solver config must not contain DROT fields rho or eps"
+            )
+        required = {"backend", "relative_tol", "max_iter"}
+        missing_solver_fields = sorted(required.difference(solver))
+        if missing_solver_fields:
+            raise ValueError(
+                "FASTNEWTON solver config is missing: {}".format(
+                    ", ".join(missing_solver_fields)
+                )
+            )
+        if float(solver["relative_tol"]) <= 0:
+            raise ValueError("solver.relative_tol must be positive")
+        for field in ("absolute_tol", "certificate_tol"):
+            if field in solver and float(solver[field]) <= 0:
+                raise ValueError("solver.{} must be positive".format(field))
+        if not _is_integer(solver["max_iter"]) or solver["max_iter"] <= 0:
+            raise ValueError("solver.max_iter must be a positive integer")
+    else:
+        raise ValueError("solver.backend must be drot or fastnewton")
 
 
 def resolve_config_path(config_file):
@@ -436,6 +474,11 @@ def train_one_time(args, state_logger):
     )
 
     model = model.to(device)
+    projector = None
+    if args.algorithm == "stride_gw":
+        from pseudolabel.gw import projector_from_solver_config
+
+        projector = projector_from_solver_config(args.solver)
     optimizer = torch.optim.AdamW(model.parameters(),lr=args.lr,weight_decay=args.weight_decay,betas=(0.9, 0.99))
     scheduler = utils.Ratioschedule(args.warmup_epochs,args.epochs,args.lr,args.min_lr,schedule_type='exp',gamma=0.98)
     infolist = utils.InfoBuffer(args)
@@ -461,6 +504,7 @@ def train_one_time(args, state_logger):
             epoch,
             scheduler,
             args,
+            projector,
         )
         if train_state is not None:
             train_state_dict[epoch] = train_state
@@ -557,13 +601,6 @@ if __name__ == "__main__":
     if args.validate_config:
         print(yaml.safe_dump(vars(args), sort_keys=True))
         raise SystemExit(0)
-    if getattr(args, "algorithm", "corregen_baseline") == "stride_gw":
-        raise RuntimeError(
-            "algorithm=stride_gw is validated but not executable yet: "
-            "the two-stage GW training backend must be integrated before "
-            "formal STRIDE training."
-        )
-
     os.environ["OMP_NUM_THREADS"] = str(args.threads)
     torch.set_num_threads(args.threads)
 
