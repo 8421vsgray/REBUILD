@@ -20,7 +20,7 @@ from solver.projection_interface import TransportProjector, validate_transport_p
 
 
 class GWProjectionFailure(RuntimeError):
-    """Raised when one finite GW projection is not verified as feasible."""
+    """Raised when one finite GW projection is not feasible."""
 
 
 @dataclass(frozen=True)
@@ -35,6 +35,7 @@ class GWStepDiagnostics:
     col_relative_residual: float
     minimum_value: float
     off_diagonal_mass: float
+    optimality_status: str = "unverified"
 
 
 def _require_feature_pair(source_features: torch.Tensor, target_features: torch.Tensor) -> int:
@@ -97,6 +98,7 @@ def _projector_parameters(projector: TransportProjector) -> dict[str, Any]:
         "backend": projector.__class__.__name__,
         "rho": getattr(projector, "rho", None),
         "eps": getattr(projector, "solver_eps", None),
+        "relative_tol": getattr(projector, "relative_tolerance", None),
         "max_iter": getattr(projector, "max_iterations", None),
     }
 
@@ -158,7 +160,7 @@ def generate_gw_targets(
             ) from error
         projection_seconds = time.perf_counter() - projection_start
         diagnostics = result.diagnostics
-        if diagnostics.status != "success":
+        if diagnostics.status not in {"success", "feasible_only"}:
             raise GWProjectionFailure(
                 "GW projection status={} at step {}".format(
                     diagnostics.status, step
@@ -203,6 +205,9 @@ def generate_gw_targets(
                 col_relative_residual=feasibility.col_relative_residual,
                 minimum_value=float(transport.min().item()),
                 off_diagonal_mass=off_diagonal_mass,
+                optimality_status=(
+                    "verified" if diagnostics.optimality_verified else "unverified"
+                ),
             )
         )
         total_projection_seconds += projection_seconds
@@ -217,7 +222,12 @@ def generate_gw_targets(
     diagonal_mass = float(pseudo_labels.diagonal().mean().item())
     diagnostics = {
         "status": "success",
-        "optimality": "unverified",
+        "optimality": (
+            "verified"
+            if step_diagnostics
+            and all(item.optimality_status == "verified" for item in step_diagnostics)
+            else "unverified"
+        ),
         "batch_size": batch_size,
         "steps": steps,
         "step_size": step_size,
@@ -259,9 +269,14 @@ def generate_bidirectional_gw_targets(
     """
     if len(predictions) != 2 or len(target_embeddings) != 2:
         raise ValueError("predictions and target_embeddings must each contain two views")
+    reset_state = getattr(projector, "reset_state", None)
+    if reset_state is not None:
+        reset_state()
     p12, diagnostics12 = generate_gw_targets(
         predictions[0], target_embeddings[1], gw_config, projector
     )
+    if reset_state is not None:
+        reset_state()
     p21, diagnostics21 = generate_gw_targets(
         predictions[1], target_embeddings[0], gw_config, projector
     )
@@ -275,15 +290,40 @@ def generate_bidirectional_gw_targets(
 
 
 def projector_from_solver_config(solver_config: Mapping[str, Any]) -> TransportProjector:
-    """Construct the configured DROT projector without hidden defaults."""
-    required = {"backend", "rho", "eps", "max_iter"}
-    missing = sorted(required.difference(solver_config))
-    if missing:
-        raise ValueError("solver config missing: {}".format(", ".join(missing)))
-    if solver_config["backend"] != "drot":
-        raise ValueError("unsupported GW projector backend: {}".format(solver_config["backend"]))
-    return DrotEuclideanProjector(
-        rho=float(solver_config["rho"]),
-        solver_eps=float(solver_config["eps"]),
-        max_iterations=int(solver_config["max_iter"]),
-    )
+    """Construct the configured projector without mixing backend options."""
+    backend = str(solver_config.get("backend", "")).lower()
+    if backend == "drot":
+        required = {"backend", "rho", "eps", "max_iter"}
+        missing = sorted(required.difference(solver_config))
+        if missing:
+            raise ValueError("solver config missing: {}".format(", ".join(missing)))
+        return DrotEuclideanProjector(
+            rho=float(solver_config["rho"]),
+            solver_eps=float(solver_config["eps"]),
+            max_iterations=int(solver_config["max_iter"]),
+        )
+    if backend == "fastnewton":
+        required = {"backend", "relative_tol", "max_iter"}
+        missing = sorted(required.difference(solver_config))
+        if missing:
+            raise ValueError("solver config missing: {}".format(", ".join(missing)))
+        mixed = sorted({"rho", "eps"}.intersection(solver_config))
+        if mixed:
+            raise ValueError(
+                "FASTNEWTON solver config must not contain DROT options: {}".format(
+                    ", ".join(mixed)
+                )
+            )
+        from solver.fastnewton_adapter import FastNewtonEuclideanProjector
+
+        return FastNewtonEuclideanProjector(
+            relative_tolerance=float(solver_config["relative_tol"]),
+            max_iterations=int(solver_config["max_iter"]),
+            absolute_tolerance=float(solver_config.get("absolute_tol", 1.0e-8)),
+            certificate_tolerance=(
+                None
+                if "certificate_tol" not in solver_config
+                else float(solver_config["certificate_tol"])
+            ),
+        )
+    raise ValueError("unsupported GW projector backend: {}".format(backend))

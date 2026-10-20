@@ -13,6 +13,8 @@ class ProjectionDiagnostics:
     col_abs_residual: float
     row_relative_residual: float
     col_relative_residual: float
+    backend_status: str = ""
+    optimality_verified: bool = False
 
 
 @dataclass(frozen=True)
