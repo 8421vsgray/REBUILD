@@ -98,3 +98,37 @@ Validation:
 - repeated MR construction, zero-MR identity, Anchor preservation, train/evaluation identity, and removed-config rejection passed;
 - remaining `c_ratio` references are only the explicit rejection check and its test fixture;
 - CorreGen OT/GMM removal, DROT, GW, and end-to-end training remain unverified.
+
+## 2026-10-20 — Stage 3: naming refactor
+
+Commits:
+
+- `3eebe62` — `docs: define rebuild naming conventions`;
+- `d38b1e3` — `refactor(naming): clarify model and function names`;
+- `61b8205` — `refactor(naming): clarify training and solver variables`;
+- `7325be6` — `refactor(naming): standardize module names` (`eval.py` → `evaluation.py`);
+- `9ba71bf` — `refactor(naming): standardize module names` (import update);
+- `5b2e12c` — `refactor(config): standardize configuration names`;
+- `d76431e` — `refactor(logging): standardize experiment diagnostics`.
+
+Completed:
+
+- renamed the active baseline class to `CorreGenBaselineModel` while retaining an explicit compatibility alias for old serialized objects;
+- clarified training state/phase and evaluation sample-index variable names;
+- renamed the abbreviated evaluation module and updated imports;
+- mapped legacy `train_time` YAML to `num_runs` with conflict detection;
+- made experiment directory and log names explicit without changing metric definitions.
+
+Validation:
+
+- state-dict key lists and deterministic CPU feature outputs match through the class-name compatibility path;
+- all imports and module compilation passed;
+- the complete test suite passed: 14 tests;
+- no naming-stage commit changed the model math, optimizer, data protocol, or metric definitions.
+
+Not yet verified:
+
+- CorreGen baseline end-to-end training;
+- DROT compilation and numerical equivalence to Euclidean projection;
+- GW gradient and pseudo-label tests;
+- removal of Sinkhorn/Partial OT/GMM and two-stage training integration.
