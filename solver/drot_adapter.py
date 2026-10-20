@@ -99,9 +99,9 @@ class DrotEuclideanProjector(TransportProjector):
 
     def __init__(
         self,
-        rho: float = 2.0,
+        rho: float = 4.0,
         max_iterations: int = 20_000,
-        solver_eps: float = 1e-4,
+        solver_eps: float = 1e-6,
         relative_tolerance: float = 1e-3,
         absolute_tolerance: float = 1e-8,
         backend: Optional[Any] = None,
@@ -112,6 +112,10 @@ class DrotEuclideanProjector(TransportProjector):
             raise ValueError("max_iterations must be positive")
         if solver_eps <= 0 or relative_tolerance <= 0 or absolute_tolerance <= 0:
             raise ValueError("solver tolerances must be positive")
+        # The upstream example uses rho=2 and eps=1e-4 for feasibility-only
+        # demonstrations.  REBUILD validated rho=4 and eps=1e-6 against an
+        # independent Euclidean projection reference, including active-set
+        # (boundary) solutions.  Keep both values configurable for audits.
         self.rho = float(rho)
         self.max_iterations = int(max_iterations)
         self.solver_eps = float(solver_eps)
