@@ -62,8 +62,8 @@ class CorreGenBaselineModel(torch.nn.Module):
         return res, res_idx
 
     @torch.no_grad()
-    def joint_dist_estimation(self, z_t, z, p, param):
-        dist = param["dist"]
+    def joint_dist_estimation(self, z_t, z, p, training_state):
+        dist = training_state["dist"]
         mp_inter = []
         mp_intra = []
         if dist is not None:
@@ -117,17 +117,19 @@ class CorreGenBaselineModel(torch.nn.Module):
         p = [L2norm(p[i]) for i in range(self.n_views)]
         return p
 
-    def forward(self, data, param, tag):
-        self._update_target_branch(param["mmt"])
+    def forward(self, data, training_state, training_phase):
+        self._update_target_branch(training_state["mmt"])
         z = [self.online_encoder[i](data[i]) for i in range(self.n_views)]
         p = [self.cross_view_decoder[i](z[i]) for i in range(self.n_views)]
         z_t = [self.target_encoder[i](data[i]) for i in range(self.n_views)]
-        if tag["rectify"]:
+        if training_phase["rectify"]:
             mp_intra = torch.eye(z[0].shape[0]).cuda()
             mp_intra = [mp_intra, mp_intra]
             mp_inter = mp_intra
         else:
-            mp_inter, mp_intra = self.joint_dist_estimation(z_t, z, p, param)
+            mp_inter, mp_intra = self.joint_dist_estimation(
+                z_t, z, p, training_state
+            )
         l_intra = (self.cl(z[0], z_t[0], mp_intra[0]) + self.cl(z[1], z_t[1], mp_intra[1])) / 2
         l_inter = (self.cl(p[0], z_t[1], mp_inter[0]) + self.cl(p[1], z_t[0], mp_inter[1])) / 2
         loss = l_inter + l_intra

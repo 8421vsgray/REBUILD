@@ -65,7 +65,7 @@ def evaluate(
         labels_all = torch.zeros(N, dtype=torch.long).to(device)
         labels_all_re = torch.zeros(N, dtype=torch.long).to(device)
 
-        for indexs, samples, labels, labels2, id1, id2, label_align in data_loader_test:
+        for indices, samples, labels, labels2, id1, id2, label_align in data_loader_test:
             for i in range(args.n_views):
                 samples[i] = samples[i].to(device, non_blocking=True)
 
@@ -74,10 +74,10 @@ def evaluate(
             features, res_idx, _= model.extract_feature(samples)
 
             for i in range(args.n_views):
-                features_all[i][indexs] = features[i]
+                features_all[i][indices] = features[i]
 
-            labels_all[indexs] = labels
-            labels_all_re[indexs] = labels2[res_idx]
+            labels_all[indices] = labels
+            labels_all_re[indices] = labels2[res_idx]
 
         features_cat = features_all.permute(1, 0, 2).reshape(N, -1)
         features_cat = torch.nn.functional.normalize(features_cat, dim=-1)

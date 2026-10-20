@@ -26,8 +26,8 @@ def train_one_epoch(
     else:
         data_loader = enumerate(data_loader_train)
 
-    tag = {"rectify": epoch < args.start_rectify_epoch}
-    param = {"mmt": args.momentum, "rho":args.rho, "dist": None}
+    training_phase = {"rectify": epoch < args.start_rectify_epoch}
+    training_state = {"mmt": args.momentum, "rho":args.rho, "dist": None}
     model.train(True)
     optimizer.zero_grad()
     for data_iter_step, (idx, samples, label1, label2, id1, id2, label_align) in data_loader:
@@ -45,8 +45,8 @@ def train_one_epoch(
             dist = None
             if epoch > args.start_guide_epoch:
                 dist = calculate_dist(infolist, samples, idx, args)
-            param["dist"] = dist
-            loss = model(samples, param, tag)
+            training_state["dist"] = dist
+            loss = model(samples, training_state, training_phase)
         loss_value = loss.item()
         if not math.isfinite(loss_value):
             print("Loss is {}, stopping training".format(loss_value))
