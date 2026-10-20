@@ -172,19 +172,22 @@ class CorreGenBaselineModel(torch.nn.Module):
         ) / 2
 
     def forward(self, data, training_state, training_phase, external_targets=None):
+        validated_external_targets = None
+        if external_targets is not None:
+            if self.n_views != 2:
+                raise ValueError("external P12/P21 targets require exactly two views")
+            validated_external_targets = self._validate_external_targets(
+                external_targets,
+                data[0].shape[0],
+                data[0].device,
+                data[0].dtype,
+            )
         self._update_target_branch(training_state["mmt"])
         z = [self.online_encoder[i](data[i]) for i in range(self.n_views)]
         p = [self.cross_view_decoder[i](z[i]) for i in range(self.n_views)]
         z_t = [self.target_encoder[i](data[i]) for i in range(self.n_views)]
-        if external_targets is not None:
-            if self.n_views != 2:
-                raise ValueError("external P12/P21 targets require exactly two views")
-            p12, p21 = self._validate_external_targets(
-                external_targets,
-                z[0].shape[0],
-                z[0].device,
-                z[0].dtype,
-            )
+        if validated_external_targets is not None:
+            p12, p21 = validated_external_targets
             mp_inter = [p12, p21]
             if training_phase["rectify"]:
                 mp_intra = torch.eye(
