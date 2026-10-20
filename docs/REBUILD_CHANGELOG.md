@@ -26,3 +26,75 @@ Not yet verified:
 - configurable evaluation batch behavior;
 - Regularized-DROT build and numerical correctness;
 - GW, training, and formal experiment results.
+
+## 2026-10-20 — Stage 1: audit and execution scope
+
+Commits:
+
+- `a8ccd62` — `docs: audit stride implementation`;
+- `f9966d6` — `docs: record rebuild execution prompts`;
+- `2c350d3` — `docs: add engineering constraints and freeze scope`.
+
+Completed:
+
+- recorded the CorreGen/STRIDE implementation audit;
+- recorded the full REBUILD task, naming-refactor task, legacy-algorithm-removal task, and engineering constraints;
+- froze the scope against unrequested losses, gates, matching strategies, and result-driven changes;
+- required a final evidence-based `docs/REBUILD_VERIFICATION_REPORT.md`.
+
+Validation:
+
+- prompt documents are stored under `docs/`;
+- `git diff --check` passed before the commits;
+- no model, optimizer, data, or evaluation implementation was changed by these documentation commits.
+
+## 2026-10-20 — Stage 2: evaluation protocol and data contracts
+
+Commits:
+
+- `3622bdd` — `fix: make evaluation batch size configurable`;
+- `9ac9cd4` — `chore: ignore generated experiment artifacts`;
+- `5d79eae` — `test: establish data protocol contracts`.
+
+Completed:
+
+- added `eval_batch_size`, defaulting to the configured training batch size;
+- removed the evaluation DataLoader's hard-coded `512` batch size;
+- kept independent RandomSamplers and `drop_last=False` for train/evaluation;
+- added explicit train/evaluation batch logging;
+- documented the current protocol in `docs/EXPERIMENT_PROTOCOL.md`;
+- added evaluation coverage and data/noise protocol tests;
+- added repository ignores for generated caches and training artifacts.
+
+Validation:
+
+- `python -m py_compile main_train.py tests/test_eval_protocol.py` passed;
+- `python -m unittest discover -s tests -p "test_*.py" -v` passed: 7 tests;
+- Scene15 fixture checks passed for repeatable MR construction, sample identity indexing, and CR train/evaluation separation;
+- DROT, GW, two-stage training, and end-to-end training remain unverified.
+
+## 2026-10-20 — Stage 2b: NC-only data scope
+
+Commits:
+
+- `fc0e813` — `docs: define nc-only data scope`;
+- `73db0ed` — `refactor(data): remove corruption ratio augmentation`;
+- `86c4930` — `test(data): verify mismatch-only protocol`;
+- `82b420f` — `docs: document NC-only evaluation protocol`.
+
+Completed:
+
+- removed `c_ratio` from the training CLI and output-directory naming;
+- rejected `c_ratio` in YAML instead of silently ignoring it;
+- removed CR Gaussian feature-noise generation and the noisy training-data branch;
+- kept MR permutation, sample identities, labels for offline checks, and standardization;
+- made training and evaluation use the same MR-processed data version;
+- updated the protocol document to define NC-only scope.
+
+Validation:
+
+- `python -m py_compile` passed for the changed loader, entrypoint, and data tests;
+- the complete test suite passed: 9 tests;
+- repeated MR construction, zero-MR identity, Anchor preservation, train/evaluation identity, and removed-config rejection passed;
+- remaining `c_ratio` references are only the explicit rejection check and its test fixture;
+- CorreGen OT/GMM removal, DROT, GW, and end-to-end training remain unverified.
