@@ -51,6 +51,29 @@ Validation:
 - no model math, GW formula or DROT kernel was changed by this configuration
   stage.
 
+## 2026-10-20 — external pseudo-label consumption interface
+
+Commit: recorded in Git history after this entry is added.
+
+Completed:
+
+- added explicit `external_targets={"P12": ..., "P21": ...}` injection to
+  `CorreGenBaselineModel.forward`;
+- validated shape, device, dtype, finiteness, non-negativity, row/column
+  normalization and gradient isolation;
+- kept the default `external_targets=None` path on the original Partial OT
+  cross-view supervision route;
+- made external-target mode bypass cross-view Partial OT while retaining the
+  existing intra-view supervision path.
+
+Validation:
+
+- dedicated pseudo-label interface tests passed: 6 tests;
+- independent MaxLikelihoodLoss numerical reference passed;
+- external diagonal/permutation labels changed the cross-view loss and online
+  encoder gradients;
+- no GW iteration, DROT call, YAML change or full training run was performed.
+
 ## 2026-10-20 — Stage 0: initialize from CorreGen
 
 Commit: recorded in Git history after this document is added.

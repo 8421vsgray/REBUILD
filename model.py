@@ -62,7 +62,7 @@ class CorreGenBaselineModel(torch.nn.Module):
         return res, res_idx
 
     @torch.no_grad()
-    def joint_dist_estimation(self, z_t, z, p, training_state):
+    def joint_dist_estimation(self, z_t, z, p, training_state, include_inter=True):
         dist = training_state["dist"]
         mp_inter = []
         mp_intra = []
@@ -89,7 +89,7 @@ class CorreGenBaselineModel(torch.nn.Module):
                         mp *= bs
                     mp = torch.eye(mp.shape[0], device=mp.device)  * (1 - self.beta) + mp * self.beta
                     mp_intra.append(mp)
-                else:
+                elif include_inter:
                     cost_inter_cross = 1.0 - p[i] @ z_t[j].t()
                     if dist is not None:
                         mp = Partial_ot(cost_inter_cross,p=dist[i],q=dist[j],reg=self.reg,rho=self.rho)
@@ -101,6 +101,52 @@ class CorreGenBaselineModel(torch.nn.Module):
                         mp *= bs
                     mp_inter.append(mp)
         return mp_inter, mp_intra
+
+    @staticmethod
+    def _validate_external_targets(external_targets, batch_size, device, dtype):
+        """Validate externally supplied row/column-stochastic pseudo-labels."""
+        if not isinstance(external_targets, dict):
+            raise TypeError("external_targets must be a dict with P12 and P21")
+        if set(external_targets) != {"P12", "P21"}:
+            raise ValueError("external_targets must contain exactly P12 and P21")
+
+        validated = {}
+        for name in ("P12", "P21"):
+            target = external_targets[name]
+            if not torch.is_tensor(target):
+                raise TypeError("{} must be a torch.Tensor".format(name))
+            if target.shape != (batch_size, batch_size):
+                raise ValueError(
+                    "{} must have shape ({}, {}), got {}".format(
+                        name, batch_size, batch_size, tuple(target.shape)
+                    )
+                )
+            if target.device != device:
+                raise ValueError(
+                    "{} must be on {}, got {}".format(name, device, target.device)
+                )
+            if target.dtype != dtype:
+                raise ValueError(
+                    "{} must have dtype {}, got {}".format(
+                        name, dtype, target.dtype
+                    )
+                )
+            if not target.is_floating_point():
+                raise TypeError("{} must use a floating-point dtype".format(name))
+            if target.requires_grad:
+                raise ValueError("{} must not require gradients".format(name))
+            if not torch.isfinite(target).all():
+                raise ValueError("{} contains NaN or Inf".format(name))
+            if (target < 0).any():
+                raise ValueError("{} must be non-negative".format(name))
+
+            ones = torch.ones(batch_size, device=device, dtype=dtype)
+            if not torch.allclose(target.sum(dim=1), ones, atol=1e-5, rtol=1e-4):
+                raise ValueError("{} rows must sum to 1".format(name))
+            if not torch.allclose(target.sum(dim=0), ones, atol=1e-5, rtol=1e-4):
+                raise ValueError("{} columns must sum to 1".format(name))
+            validated[name] = target.detach()
+        return validated["P12"], validated["P21"]
 
     @torch.no_grad()
     def extract_feature(self, data):
@@ -117,13 +163,42 @@ class CorreGenBaselineModel(torch.nn.Module):
         p = [L2norm(p[i]) for i in range(self.n_views)]
         return p
 
-    def forward(self, data, training_state, training_phase):
+    def _cross_view_loss(self, predictions, target_embeddings, inter_targets):
+        if len(inter_targets) != 2:
+            raise ValueError("two cross-view targets are required")
+        return (
+            self.cl(predictions[0], target_embeddings[1], inter_targets[0])
+            + self.cl(predictions[1], target_embeddings[0], inter_targets[1])
+        ) / 2
+
+    def forward(self, data, training_state, training_phase, external_targets=None):
         self._update_target_branch(training_state["mmt"])
         z = [self.online_encoder[i](data[i]) for i in range(self.n_views)]
         p = [self.cross_view_decoder[i](z[i]) for i in range(self.n_views)]
         z_t = [self.target_encoder[i](data[i]) for i in range(self.n_views)]
-        if training_phase["rectify"]:
-            mp_intra = torch.eye(z[0].shape[0]).cuda()
+        if external_targets is not None:
+            if self.n_views != 2:
+                raise ValueError("external P12/P21 targets require exactly two views")
+            p12, p21 = self._validate_external_targets(
+                external_targets,
+                z[0].shape[0],
+                z[0].device,
+                z[0].dtype,
+            )
+            mp_inter = [p12, p21]
+            if training_phase["rectify"]:
+                mp_intra = torch.eye(
+                    z[0].shape[0], device=z[0].device, dtype=z[0].dtype
+                )
+                mp_intra = [mp_intra, mp_intra]
+            else:
+                _, mp_intra = self.joint_dist_estimation(
+                    z_t, z, p, training_state, include_inter=False
+                )
+        elif training_phase["rectify"]:
+            mp_intra = torch.eye(
+                z[0].shape[0], device=z[0].device, dtype=z[0].dtype
+            )
             mp_intra = [mp_intra, mp_intra]
             mp_inter = mp_intra
         else:
@@ -131,7 +206,7 @@ class CorreGenBaselineModel(torch.nn.Module):
                 z_t, z, p, training_state
             )
         l_intra = (self.cl(z[0], z_t[0], mp_intra[0]) + self.cl(z[1], z_t[1], mp_intra[1])) / 2
-        l_inter = (self.cl(p[0], z_t[1], mp_inter[0]) + self.cl(p[1], z_t[0], mp_inter[1])) / 2
+        l_inter = self._cross_view_loss(p, z_t, mp_inter)
         loss = l_inter + l_intra
         return loss
 
