@@ -1,0 +1,18 @@
+# Python and test artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Training artifacts (keep experiment metadata outside Git)
+output/
+runs/
+run_logs/
+checkpoints/
+*.pt
+*.pth
+*.ckpt
+
+# Local environment files
+.venv/
+venv/
+.env
