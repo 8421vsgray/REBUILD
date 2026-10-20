@@ -13,7 +13,7 @@ import utils
 import yaml
 from dataset_loader import load_dataset
 from engine_train import train_one_epoch
-from model import OursModel
+from model import CorreGenBaselineModel
 
 warnings.filterwarnings("ignore")
 
@@ -155,7 +155,7 @@ def train_one_time(args, state_logger):
         dataset_train, dataset_test, args
     )
 
-    model = OursModel(
+    model = CorreGenBaselineModel(
         n_views=args.n_views,
         layer_dims=args.encoder_dim,
         temperature=args.temperature,

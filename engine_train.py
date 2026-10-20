@@ -1,14 +1,14 @@
 import math
 import sys
 import torch
-from model import OursModel
+from model import CorreGenBaselineModel
 from torch.utils.data import DataLoader
 from utils import MetricLogger, SmoothedValue ,InfoBuffer
 from eval import evaluate, update_infoBuffer
 
 
 def train_one_epoch(
-    model: OursModel,
+    model: CorreGenBaselineModel,
     data_loader_train: DataLoader,
     data_loader_test: DataLoader,
     optimizer: torch.optim.Optimizer,
@@ -76,4 +76,3 @@ def calculate_dist(infolist, samples, idx, args):
     for i in range(args.n_views):
         ret_sample_dist[i] = emp_dist[i][idx]
     return ret_sample_dist
-

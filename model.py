@@ -6,10 +6,10 @@ from ot_torch import Partial_ot, entropic_wasserstein
 
 L2norm = nn.functional.normalize
 
-class OursModel(torch.nn.Module):
+class CorreGenBaselineModel(torch.nn.Module):
     def __init__(self, n_views, layer_dims, temperature, n_classes, drop_rate=0.5,
                     beta=0.15, reg=0.05, rho=0.2):
-        super(OursModel, self).__init__()
+        super(CorreGenBaselineModel, self).__init__()
         self.n_views = n_views
         self.n_classes = n_classes
         self.beta = beta
@@ -196,3 +196,8 @@ class MaxLikelihoodLoss(nn.Module):
         nll_loss = similarity * target
         loss = nll_loss.mean()
         return loss
+
+
+# Compatibility symbol for checkpoints or external scripts written against
+# the original CorreGen name. New REBUILD code must use CorreGenBaselineModel.
+OursModel = CorreGenBaselineModel
