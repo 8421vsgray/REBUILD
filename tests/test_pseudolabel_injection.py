@@ -189,6 +189,11 @@ class ExternalPseudoLabelTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "gradients"):
             model._validate_external_targets(requires_grad, 7, device, dtype)
 
+        with self.assertRaisesRegex(ValueError, "dtype"):
+            model._validate_external_targets(valid, 7, device, torch.float64)
+        with self.assertRaisesRegex(ValueError, "must be on"):
+            model._validate_external_targets(valid, 7, torch.device("cuda"), dtype)
+
     def test_validation_supports_actual_batch_sizes(self):
         model = self.make_model()
         for batch_size in (7, 32, 512):
