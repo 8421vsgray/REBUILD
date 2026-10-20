@@ -17,6 +17,8 @@ from model import CorreGenBaselineModel
 
 warnings.filterwarnings("ignore")
 
+MAX_FORMAL_BATCH_SIZE = 512
+
 
 def get_args_parser():
     parser = argparse.ArgumentParser(description="Training")
@@ -89,12 +91,22 @@ def resolve_batch_sizes(args, n_train, n_test):
         raise ValueError("training and evaluation datasets must be non-empty")
     if args.batch_size <= 0:
         raise ValueError("batch_size must be positive")
+    if args.batch_size > MAX_FORMAL_BATCH_SIZE:
+        raise ValueError(
+            "REBUILD formal training batch_size must be <= {} "
+            "(B=1024 is diagnostic-only)".format(MAX_FORMAL_BATCH_SIZE)
+        )
 
     eval_batch_size = args.eval_batch_size
     if eval_batch_size is None:
         eval_batch_size = args.batch_size
     if eval_batch_size <= 0:
         raise ValueError("eval_batch_size must be positive")
+    if eval_batch_size > MAX_FORMAL_BATCH_SIZE:
+        raise ValueError(
+            "REBUILD formal eval_batch_size must be <= {} "
+            "(B=1024 is diagnostic-only)".format(MAX_FORMAL_BATCH_SIZE)
+        )
 
     return min(args.batch_size, n_train), min(eval_batch_size, n_test)
 

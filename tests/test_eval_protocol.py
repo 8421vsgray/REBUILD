@@ -71,6 +71,14 @@ class EvaluationProtocolTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             resolve_batch_sizes(make_args(batch_size=4, eval_batch_size=0), 5, 7)
 
+    def test_formal_batch_size_above_512_is_rejected(self):
+        with self.assertRaises(ValueError):
+            resolve_batch_sizes(make_args(batch_size=1024), 2048, 2048)
+        with self.assertRaises(ValueError):
+            resolve_batch_sizes(
+                make_args(batch_size=512, eval_batch_size=1024), 2048, 2048
+            )
+
     def test_experiment_folder_uses_explicit_protocol_names(self):
         args = SimpleNamespace(
             dataset="Scene15", temperature=0.5, m_ratio=0.8, epochs=200

@@ -1,5 +1,27 @@
 # REBUILD changelog
 
+## 2026-10-20 — formal batch boundary and multi-location checkpoint
+
+Commit: recorded in Git history after this document is added.
+
+Completed:
+
+- changed all maintained dataset YAML files to explicit
+  `batch_size: 512` and `eval_batch_size: 512`;
+- added a training/evaluation guard rejecting formal batch sizes above 512;
+- kept B=1024 DROT measurements as solver stress diagnostics only;
+- recorded the new RTX 3090 build caveat and timing evidence separately from
+  the historical RTX 4090 CUDA 12.8 evidence;
+- established the intended 3090-primary, local-mirror and drift-backup Git
+  synchronization policy.
+
+Validation:
+
+- configuration and documentation edits pass `git diff --check`;
+- the batch protocol regression tests are pending until this checkpoint is
+  committed;
+- no model math or third-party DROT source was changed by this protocol edit.
+
 ## 2026-10-20 — Stage 0: initialize from CorreGen
 
 Commit: recorded in Git history after this document is added.

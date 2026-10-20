@@ -8,6 +8,7 @@ n_classes: 15
 
 # Training parameters
 batch_size: 512
+eval_batch_size: 512
 momentum: 0.98
 temperature: 0.5
 blr: 5.0e-4

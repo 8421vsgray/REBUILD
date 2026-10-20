@@ -16,9 +16,14 @@
 - `batch_size` 控制训练 DataLoader。
 - `eval_batch_size` 控制评估 DataLoader。
 - `eval_batch_size` 未在 YAML 或命令行显式设置时，默认取 `batch_size`。
-- 显式设置 `eval_batch_size` 时，允许与训练 batch 不同，并且必须记录在日志中。
+- 正式 REBUILD 配置的训练和评估 batch size 上限均为 `512`；超过该上限的正式训练入口会直接拒绝。
+- 正式数据集 YAML 显式设置 `batch_size: 512` 和 `eval_batch_size: 512`，避免把评估大小留给隐式默认值。
+- 在 `512` 上限内，受控诊断可以显式设置不同的 `eval_batch_size`，并且必须记录在日志中。
 - 两个批大小均限制在对应数据集长度以内，但不丢弃样本。
 - 评估 DataLoader 不得在源码中硬编码为 512。
+
+`B=1024` 仅保留为 DROT/投影器压力诊断规模，不作为正式训练、评估或结果报告的
+batch size。模型配置中的隐藏层宽度 `1024` 与 batch size 无关，不应混淆。
 
 ## 评估与指标
 

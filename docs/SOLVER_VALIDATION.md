@@ -12,7 +12,14 @@ REBUILD Euclidean-projection validation below: the upstream test checks
 feasibility residuals, not whether the returned plan minimizes the Euclidean
 projection objective.
 
-## Environment and build evidence
+## Formal batch-size boundary
+
+Formal REBUILD training and evaluation use `batch_size <= 512` and
+`eval_batch_size <= 512`. The maintained dataset YAML files explicitly use
+`512/512`. B=1024 remains archived as a DROT stress-diagnostic size only; it
+is not a formal training or evaluation target.
+
+## Historical 4090 build evidence
 
 - GPU: NVIDIA GeForce RTX 4090.
 - PyTorch: `2.8.0+cu128`.
@@ -28,6 +35,38 @@ The official `pytorch/test.py` completed all seven quadratic and seven
 group-lasso cases and printed `PASS`; the reported upstream residuals were at
 or below `0.000100`. Generated build files and the extension are ignored by
 Git and are not treated as source evidence.
+
+## New RTX 3090 build and timing diagnosis
+
+A second validation was performed on the newly provisioned RTX 3090:
+
+- GPU: NVIDIA GeForce RTX 3090.
+- PyTorch: `2.6.0+cu124`; runtime CUDA `12.4`.
+- DROT extension: rebuilt for CPython 3.12 in
+  `/root/code/REBUILD/solver/Regularized-DROT/pytorch`.
+- CUDA compiler: system `nvcc` 12.0; the extension compiled and the
+  unmodified upstream 14-case test printed `PASS`.
+- The container restored NVIDIA 580 userspace symlinks while the kernel driver
+  remained 550.76. The validation session temporarily selected the matching
+  550.76 libraries. This is an environment caveat, not a claim of a clean
+  permanent driver installation.
+
+The first controlled timing run used an empty RTX 3090 and measured the full
+adapter (native DROT plus conversion/diagnostics). Median times were:
+
+| B | random | GW-like |
+| ---: | ---: | ---: |
+| 128 | 168 ms | 29 ms |
+| 256 | 286 ms | 24 ms |
+| 512 | 429 ms | 24 ms |
+| 1024 | 2682 ms | 2670 ms |
+
+At B=1024, the `rho=4`, `max_iterations=20000` run reached roughly
+2.7 seconds and the upstream wrapper did not expose its internal iteration
+count. The max-iteration diagnostic showed that increasing the cap drove the
+runtime approximately linearly for random inputs; therefore B=1024 is not
+appropriate for high-frequency formal training. The B=512 timing is retained
+as a candidate-backend diagnostic, not as a correctness certificate.
 
 ## REBUILD Euclidean projection mapping
 
@@ -94,7 +133,8 @@ calls returned finite plans satisfying the current feasibility gate:
 - negative violation <= `1e-7`;
 - row and column relative residual <= `1e-3`.
 
-This is a feasibility result only. The upstream extension does not expose its
+This is a feasibility result only; B=1024 here is a solver stress diagnostic,
+not a formal training batch. The upstream extension does not expose its
 internal iteration count. Its C++ wrapper allocates a local `n_iters` value but
 discards it before returning the plan; REBUILD therefore records iteration
 count as unavailable rather than inventing one. `max_iterations=20000` is
@@ -150,9 +190,9 @@ kept only as an invalid-run artifact and is not used as evidence.
 Before using DROT as a formal training backend, REBUILD still needs:
 
 1. objective values and convergence comparison for the large-batch cases;
-2. the independent projection performance benchmark;
-3. real STRIDE GW candidate inputs with the same acceptance checks;
-4. explicit failure-rate and checkpoint records for those sizes.
+2. the independent B=512 projection performance benchmark;
+3. real STRIDE GW candidate inputs with the same acceptance checks at B<=512;
+4. explicit failure-rate and checkpoint records for the formal sizes.
 
 No formal training result may treat the feasibility gate as an optimality
 proof, and no silent Newton/Sinkhorn fallback is allowed.

@@ -169,7 +169,9 @@ REBUILD 不需要 CorreGen 的三阶段训练、不需要 Sinkhorn、不需要 P
 
 同时修正评估 Batch Size 硬编码的问题：
 
-`eval_batch_size` 默认等于 YAML 中的 `batch_size`，支持显式覆盖，不允许固定写成 512。
+`eval_batch_size` 默认等于 YAML 中的 `batch_size`，支持显式覆盖，但 REBUILD
+正式训练和评估均不得超过 `512`。不能在源码中固定写成 `512` 来替代配置；
+正式 YAML 应显式记录 `batch_size: 512` 与 `eval_batch_size: 512`。
 
 ## 五、删除后必须执行的验证
 
