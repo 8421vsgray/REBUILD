@@ -32,6 +32,6 @@ steps: 3
 step_size: 0.05
 solver:
   backend: drot
-  rho: 4.0
+  rho: 2.0
   eps: 1.0e-3
   max_iter: 20000
