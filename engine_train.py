@@ -4,7 +4,7 @@ import torch
 from model import CorreGenBaselineModel
 from torch.utils.data import DataLoader
 from utils import MetricLogger, SmoothedValue ,InfoBuffer
-from eval import evaluate, update_infoBuffer
+from evaluation import evaluate, update_infoBuffer
 
 
 def train_one_epoch(
