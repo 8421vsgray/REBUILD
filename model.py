@@ -163,6 +163,38 @@ class CorreGenBaselineModel(torch.nn.Module):
         p = [L2norm(p[i]) for i in range(self.n_views)]
         return p
 
+    def compute_training_features(self, data, momentum=None, update_target=True):
+        """Compute one training-state feature tuple for STRIDE supervision.
+
+        The target branch stays in the caller's current training mode.  The
+        no-grad context only prevents target features from entering the
+        optimizer graph; it does not disable target Dropout or BatchNorm.
+        """
+        if update_target:
+            if momentum is None:
+                raise ValueError("momentum is required when update_target=True")
+            self._update_target_branch(momentum)
+        z = [self.online_encoder[i](data[i]) for i in range(self.n_views)]
+        p = [self.cross_view_decoder[i](z[i]) for i in range(self.n_views)]
+        with torch.no_grad():
+            z_t = [self.target_encoder[i](data[i]) for i in range(self.n_views)]
+        return z, p, z_t
+
+    def loss_from_training_features(self, z, p, z_t, inter_targets):
+        """Consume cross-view labels using an already-computed feature tuple."""
+        if len(z) != 2 or len(p) != 2 or len(z_t) != 2:
+            raise ValueError("STRIDE training currently requires exactly two views")
+        if len(inter_targets) != 2:
+            raise ValueError("two cross-view targets are required")
+        batch_size = z[0].shape[0]
+        diagonal = torch.eye(batch_size, dtype=z[0].dtype, device=z[0].device)
+        l_intra = (
+            self.cl(z[0], z_t[0], diagonal)
+            + self.cl(z[1], z_t[1], diagonal)
+        ) / 2.0
+        l_inter = self._cross_view_loss(p, z_t, inter_targets)
+        return l_intra + l_inter
+
     def _cross_view_loss(self, predictions, target_embeddings, inter_targets):
         if len(inter_targets) != 2:
             raise ValueError("two cross-view targets are required")
@@ -182,20 +214,17 @@ class CorreGenBaselineModel(torch.nn.Module):
                 data[0].device,
                 data[0].dtype,
             )
+        if validated_external_targets is not None:
+            z, p, z_t = self.compute_training_features(
+                data, momentum=training_state["mmt"], update_target=update_target
+            )
+            return self.loss_from_training_features(z, p, z_t, validated_external_targets)
         if update_target:
             self._update_target_branch(training_state["mmt"])
         z = [self.online_encoder[i](data[i]) for i in range(self.n_views)]
         p = [self.cross_view_decoder[i](z[i]) for i in range(self.n_views)]
         z_t = [self.target_encoder[i](data[i]) for i in range(self.n_views)]
-        if validated_external_targets is not None:
-            p12, p21 = validated_external_targets
-            mp_inter = [p12, p21]
-            # STRIDE keeps within-view supervision diagonal after GW starts.
-            mp_intra = torch.eye(
-                z[0].shape[0], device=z[0].device, dtype=z[0].dtype
-            )
-            mp_intra = [mp_intra, mp_intra]
-        elif training_phase["rectify"]:
+        if training_phase["rectify"]:
             mp_intra = torch.eye(
                 z[0].shape[0], device=z[0].device, dtype=z[0].dtype
             )

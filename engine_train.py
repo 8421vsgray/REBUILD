@@ -8,24 +8,6 @@ from evaluation import evaluate, update_infoBuffer
 from pseudolabel.gw import generate_bidirectional_gw_targets, projector_from_solver_config
 
 
-@torch.no_grad()
-def _make_gw_inputs(model: CorreGenBaselineModel, samples):
-    """Build detached online predictions and EMA embeddings for GW labels."""
-    was_training = model.training
-    model.eval()
-    try:
-        online = [model.online_encoder[i](samples[i]) for i in range(model.n_views)]
-        predictions = [
-            model.cross_view_decoder[i](online[i]) for i in range(model.n_views)
-        ]
-        target_embeddings = [
-            model.target_encoder[i](samples[i]) for i in range(model.n_views)
-        ]
-    finally:
-        model.train(was_training)
-    return predictions, target_embeddings
-
-
 def train_one_epoch(
     model: CorreGenBaselineModel,
     data_loader_train: DataLoader,
@@ -65,36 +47,47 @@ def train_one_epoch(
             samples[i] = samples[i].to(device, non_blocking=True)
 
         with torch.autocast("cuda", enabled=False):
-            dist = None
-            if not is_stride_gw and epoch > args.start_guide_epoch:
-                dist = calculate_dist(infolist, samples, idx, args)
-            training_state["dist"] = dist
-            external_targets = None
-            if is_stride_gw and not training_phase["rectify"]:
-                model._update_target_branch(training_state["mmt"])
-                predictions, target_embeddings = _make_gw_inputs(model, samples)
-                external_targets, gw_diagnostics = generate_bidirectional_gw_targets(
-                    predictions,
-                    target_embeddings,
-                    {
-                        "init": args.init,
-                        "steps": args.steps,
-                        "step_size": args.step_size,
-                    },
-                    projector,
+            if is_stride_gw:
+                z, p, z_t = model.compute_training_features(
+                    samples, momentum=training_state["mmt"], update_target=True
                 )
-                if args.print_this_epoch:
-                    metric_logger.update(
-                        p12_offdiag=gw_diagnostics["P12"]["non_diagonal_mass"],
-                        p21_offdiag=gw_diagnostics["P21"]["non_diagonal_mass"],
-                    )
-            loss = model(
-                samples,
-                training_state,
-                training_phase,
-                external_targets=external_targets,
-                update_target=not (is_stride_gw and not training_phase["rectify"]),
-            )
+                if training_phase["rectify"]:
+                    batch_size = z[0].shape[0]
+                    identity = torch.eye(batch_size, dtype=z[0].dtype, device=z[0].device)
+                    inter_targets = [identity, identity]
+                else:
+                    with torch.no_grad():
+                        generated_targets, gw_diagnostics = generate_bidirectional_gw_targets(
+                            p,
+                            z_t,
+                            {
+                                "init": args.init,
+                                "steps": args.steps,
+                                "step_size": args.step_size,
+                            },
+                            projector,
+                        )
+                    inter_targets = [
+                        generated_targets["P12"], generated_targets["P21"]
+                    ]
+                    if args.print_this_epoch:
+                        metric_logger.update(
+                            p12_offdiag=gw_diagnostics["P12"]["non_diagonal_mass"],
+                            p21_offdiag=gw_diagnostics["P21"]["non_diagonal_mass"],
+                        )
+                loss = model.loss_from_training_features(z, p, z_t, inter_targets)
+            else:
+                dist = None
+                if epoch > args.start_guide_epoch:
+                    dist = calculate_dist(infolist, samples, idx, args)
+                training_state["dist"] = dist
+                loss = model(
+                    samples,
+                    training_state,
+                    training_phase,
+                    external_targets=None,
+                    update_target=True,
+                )
         loss_value = loss.item()
         if not math.isfinite(loss_value):
             print("Loss is {}, stopping training".format(loss_value))
