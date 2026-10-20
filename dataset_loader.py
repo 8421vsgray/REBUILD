@@ -51,7 +51,7 @@ def load_mat(args):
             [mat['X'][0][6].T, mat['X'][0][5].T], args, [0, 1]
         )
 
-    elif args.dataset == "umpc_food101":
+    elif args.dataset in ("umpc_food101", "Food101"):
         mat = sio.loadmat(os.path.join(args.data_path, "umpc_food101.mat"))
         img_features = mat["img_features"].astype(np.float32)
         txt_features = mat["txt_features"].astype(np.float32)
@@ -64,6 +64,24 @@ def load_mat(args):
         data_X = _select_views(
             [X[0].astype("float32"), X[1].astype("float32")], args, [1, 0]
         )
+        label_y = np.squeeze(mat["Y"])
+
+    elif args.dataset in ("Handwritten", "HandWritten"):
+        filename = "Handwritten.mat"
+        if not os.path.exists(os.path.join(args.data_path, filename)):
+            filename = "HandWritten.mat"
+        mat = sio.loadmat(os.path.join(args.data_path, filename))
+        raw_views = [np.asarray(view) for view in np.ravel(mat["X"], order="F")]
+        data_X = _select_views(raw_views, args, [0, 1])
+        label_y = np.squeeze(mat["Y"])
+
+    elif args.dataset == "CCV20":
+        filename = "CCV20.mat"
+        if not os.path.exists(os.path.join(args.data_path, filename)):
+            filename = "CCV.mat"
+        mat = sio.loadmat(os.path.join(args.data_path, filename))
+        raw_views = [np.asarray(view) for view in np.ravel(mat["X"], order="F")]
+        data_X = _select_views(raw_views, args, [1, 2])
         label_y = np.squeeze(mat["Y"])
 
     elif args.dataset == "XMediaNet":

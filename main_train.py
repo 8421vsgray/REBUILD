@@ -18,7 +18,7 @@ from model import CorreGenBaselineModel
 
 warnings.filterwarnings("ignore")
 
-MAX_FORMAL_BATCH_SIZE = 512
+MAX_FORMAL_BATCH_SIZE = 1024
 SUPPORTED_CONFIG_FIELDS = {
     "algorithm",
     "batch_size",
@@ -194,7 +194,7 @@ def resolve_batch_sizes(args, n_train, n_test):
     if args.batch_size > MAX_FORMAL_BATCH_SIZE:
         raise ValueError(
             "REBUILD formal training batch_size must be <= {} "
-            "(B=1024 is diagnostic-only)".format(MAX_FORMAL_BATCH_SIZE)
+            "for the configured solver backend".format(MAX_FORMAL_BATCH_SIZE)
         )
 
     eval_batch_size = args.eval_batch_size
@@ -205,7 +205,7 @@ def resolve_batch_sizes(args, n_train, n_test):
     if eval_batch_size > MAX_FORMAL_BATCH_SIZE:
         raise ValueError(
             "REBUILD formal eval_batch_size must be <= {} "
-            "(B=1024 is diagnostic-only)".format(MAX_FORMAL_BATCH_SIZE)
+            "for the configured solver backend".format(MAX_FORMAL_BATCH_SIZE)
         )
 
     return min(args.batch_size, n_train), min(eval_batch_size, n_test)
