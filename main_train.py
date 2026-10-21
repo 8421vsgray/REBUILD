@@ -49,6 +49,7 @@ SUPPORTED_CONFIG_FIELDS = {
     "output_dir",
     "p",
     "pin_mem",
+    "prior_gate",
     "print_freq",
     "reg",
     "rho",
@@ -75,6 +76,15 @@ SOLVER_CONFIG_FIELDS = {
     "relative_tol",
     "absolute_tol",
     "certificate_tol",
+    "warm_start",
+}
+PRIOR_GATE_CONFIG_FIELDS = {
+    "enabled",
+    "lock",
+    "lockmass",
+    "offdiag_tol",
+    "raw_offdiag_tol",
+    "on_projection_failure",
 }
 STANDARD_CONFIG_REQUIRED_FIELDS = {
     "algorithm",
@@ -302,6 +312,35 @@ def _validate_standard_config(configs):
     if float(configs["step_size"]) <= 0:
         raise ValueError("step_size must be positive")
 
+    if "prior_gate" in configs:
+        prior_gate = configs["prior_gate"]
+        if not isinstance(prior_gate, dict):
+            raise ValueError("prior_gate must be a mapping")
+        unknown_prior_gate_fields = sorted(
+            set(prior_gate).difference(PRIOR_GATE_CONFIG_FIELDS)
+        )
+        if unknown_prior_gate_fields:
+            raise ValueError(
+                "Unknown prior_gate field(s): {}".format(
+                    ", ".join(unknown_prior_gate_fields)
+                )
+            )
+        if "enabled" in prior_gate and not isinstance(
+            prior_gate["enabled"], bool
+        ):
+            raise ValueError("prior_gate.enabled must be boolean")
+        if "lock" in prior_gate and not isinstance(prior_gate["lock"], bool):
+            raise ValueError("prior_gate.lock must be boolean")
+        if "lockmass" in prior_gate and float(prior_gate["lockmass"]) < 0.0:
+            raise ValueError("prior_gate.lockmass must be non-negative")
+        for field in ("offdiag_tol", "raw_offdiag_tol"):
+            if field in prior_gate and float(prior_gate[field]) < 0.0:
+                raise ValueError("prior_gate.{} must be non-negative".format(field))
+        if "on_projection_failure" in prior_gate and not isinstance(
+            prior_gate["on_projection_failure"], bool
+        ):
+            raise ValueError("prior_gate.on_projection_failure must be boolean")
+
     solver = configs["solver"]
     if not isinstance(solver, dict):
         raise ValueError("solver must be a mapping")
@@ -344,6 +383,8 @@ def _validate_standard_config(configs):
         for field in ("absolute_tol", "certificate_tol"):
             if field in solver and float(solver[field]) <= 0:
                 raise ValueError("solver.{} must be positive".format(field))
+        if "warm_start" in solver and not isinstance(solver["warm_start"], bool):
+            raise ValueError("solver.warm_start must be boolean")
         if not _is_integer(solver["max_iter"]) or solver["max_iter"] <= 0:
             raise ValueError("solver.max_iter must be a positive integer")
     else:

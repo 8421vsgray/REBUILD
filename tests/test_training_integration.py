@@ -188,6 +188,27 @@ class TrainingIntegrationTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             main_train._validate_standard_config(mixed)
 
+    def test_prior_gate_lock_and_lockmass_controls(self):
+        config = main_train.load_config_file(
+            main_train.resolve_config_path("config/Scene15_MR08_FASTNEWTON.yaml")
+        )
+        config = copy.deepcopy(config)
+        config["prior_gate"] = {
+            "lock": False,
+            "lockmass": 2.0e-3,
+        }
+        main_train._validate_standard_config(config)
+
+        invalid_lock = copy.deepcopy(config)
+        invalid_lock["prior_gate"]["lock"] = "false"
+        with self.assertRaises(ValueError):
+            main_train._validate_standard_config(invalid_lock)
+
+        invalid_mass = copy.deepcopy(config)
+        invalid_mass["prior_gate"]["lockmass"] = -1.0
+        with self.assertRaises(ValueError):
+            main_train._validate_standard_config(invalid_mass)
+
     def test_stride_engine_generates_gw_targets_and_updates_model(self):
         torch.manual_seed(20261020)
         model = CorreGenBaselineModel(
