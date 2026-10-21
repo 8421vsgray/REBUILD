@@ -68,6 +68,23 @@ runtime approximately linearly for random inputs; therefore B=1024 is not
 appropriate for high-frequency formal training. The B=512 timing is retained
 as a candidate-backend diagnostic, not as a correctness certificate.
 
+### Formal B=512 benchmark
+
+After fixing the benchmark report writer, a 30-repeat run at
+`rho=4`, `solver_eps=1e-6`, with three warmups was completed on the empty
+RTX 3090. Every adapter and native call passed the strict feasibility gate:
+
+| input | adapter mean / median / P95 | native DROT mean / median / P95 | valid |
+| --- | ---: | ---: | ---: |
+| random, B=512 | 412.050 / 411.578 / 414.672 ms | 409.686 / 409.481 / 412.785 ms | 30/30 |
+| GW-like, B=512 | 22.565 / 22.560 / 22.623 ms | 20.101 / 20.089 / 20.157 ms | 30/30 |
+
+The raw records and generated Markdown are kept outside Git under
+`.artifacts/benchmark_b512_new3090.json` and
+`.artifacts/benchmark_b512_new3090.md`. These timings are performance
+diagnostics only; large-scale Euclidean optimality remains a separate
+validation question.
+
 ## REBUILD Euclidean projection mapping
 
 For a candidate matrix `X`, REBUILD uses

@@ -47,6 +47,7 @@ class FastNewtonEuclideanProjector(TransportProjector):
         max_iterations: int = 50,
         absolute_tolerance: float = 1.0e-8,
         certificate_tolerance: Optional[float] = None,
+        warm_start: bool = True,
         solver_options: Optional[dict[str, Any]] = None,
     ) -> None:
         if relative_tolerance <= 0.0:
@@ -63,6 +64,9 @@ class FastNewtonEuclideanProjector(TransportProjector):
         self.certificate_tolerance = (
             None if certificate_tolerance is None else float(certificate_tolerance)
         )
+        if not isinstance(warm_start, bool):
+            raise ValueError("warm_start must be boolean")
+        self.warm_start = warm_start
         self.solver_options = dict(solver_options or {})
         self._backend = None
         self._backend_error: Optional[BaseException] = None
@@ -156,9 +160,9 @@ class FastNewtonEuclideanProjector(TransportProjector):
         }
         if self.certificate_tolerance is not None:
             options["certificate_tolerance"] = self.certificate_tolerance
-        if self._dual_warm_start is not None:
+        if self.warm_start and self._dual_warm_start is not None:
             options["dual_warm_start"] = self._dual_warm_start
-        if self._active_warm_start is not None:
+        if self.warm_start and self._active_warm_start is not None:
             options["active_warm_start"] = self._active_warm_start
 
         try:
@@ -205,10 +209,15 @@ class FastNewtonEuclideanProjector(TransportProjector):
                 ),
             )
 
-        # Retain state only after a feasible result.  The GW caller resets it
-        # between P12 and P21 so the two directions cannot contaminate one another.
-        self._dual_warm_start = self._clone_state(info.get("dual_state"))
-        self._active_warm_start = self._clone_state(info.get("active_state"))
+        # Retain state only after a feasible result when explicitly enabled.
+        # The GW caller resets it between P12 and P21 so the two directions
+        # cannot contaminate one another.
+        if self.warm_start:
+            self._dual_warm_start = self._clone_state(info.get("dual_state"))
+            self._active_warm_start = self._clone_state(info.get("active_state"))
+        else:
+            self._dual_warm_start = None
+            self._active_warm_start = None
         optimality_verified = bool(info.get("optimality_verified", False))
         status = "success" if backend_status == "verified" else "feasible_only"
         return ProjectionResult(

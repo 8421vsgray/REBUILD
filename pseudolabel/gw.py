@@ -100,6 +100,7 @@ def _projector_parameters(projector: TransportProjector) -> dict[str, Any]:
         "eps": getattr(projector, "solver_eps", None),
         "relative_tol": getattr(projector, "relative_tolerance", None),
         "max_iter": getattr(projector, "max_iterations", None),
+        "warm_start": getattr(projector, "warm_start", None),
     }
 
 
@@ -136,6 +137,8 @@ def generate_gw_targets(
     target = target_features.detach()
     source_relation = relation_matrix(source)
     target_relation = relation_matrix(target)
+    prior_gate_precheck = bool(gw_config.get("prior_gate_precheck", False))
+    raw_offdiag_tol = float(gw_config.get("raw_offdiag_tol", 1.0e-3))
     marginal = torch.full(
         (batch_size,),
         1.0 / float(batch_size),
@@ -151,6 +154,34 @@ def generate_gw_targets(
     for step in range(steps):
         gradient = gw_gradient(source_relation, target_relation, transport)
         candidate = transport - step_size * gradient
+        if step == 0 and prior_gate_precheck:
+            positive_candidate = candidate.clamp_min(0.0)
+            positive_total = float(positive_candidate.sum().item())
+            if positive_total > 0.0:
+                raw_offdiag_mass = 1.0 - float(
+                    positive_candidate.diagonal().sum().item() / positive_total
+                )
+            else:
+                raw_offdiag_mass = 0.0
+            if raw_offdiag_mass <= raw_offdiag_tol:
+                pseudo_labels = (transport * float(batch_size)).detach()
+                return pseudo_labels, {
+                    "status": "prior_gate",
+                    "prior_gate": True,
+                    "prior_gate_reason": "low_raw_diffusion",
+                    "batch_size": batch_size,
+                    "steps": steps,
+                    "step_size": step_size,
+                    "solver_parameters": _projector_parameters(projector),
+                    "row_abs_residual": 0.0,
+                    "col_abs_residual": 0.0,
+                    "row_relative_residual": 0.0,
+                    "col_relative_residual": 0.0,
+                    "non_diagonal_mass": 0.0,
+                    "raw_offdiag_mass": raw_offdiag_mass,
+                    "projection_seconds": 0.0,
+                    "step_diagnostics": [],
+                }
         projection_start = time.perf_counter()
         try:
             result = projector.project(candidate, marginal, marginal)
@@ -222,6 +253,9 @@ def generate_gw_targets(
     diagonal_mass = float(pseudo_labels.diagonal().mean().item())
     diagnostics = {
         "status": "success",
+        "prior_gate": False,
+        "prior_gate_reason": None,
+        "raw_offdiag_mass": None,
         "optimality": (
             "verified"
             if step_diagnostics

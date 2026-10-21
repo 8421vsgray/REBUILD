@@ -66,6 +66,15 @@ def load_mat(args):
         )
         label_y = np.squeeze(mat["Y"])
 
+    elif args.dataset == "Reuters":
+        mat = sio.loadmat(os.path.join(args.data_path, "Reuters_dim10.mat"))
+        raw_views = [
+            np.vstack((mat["x_train"][0], mat["x_test"][0])).astype("float32"),
+            np.vstack((mat["x_train"][1], mat["x_test"][1])).astype("float32"),
+        ]
+        data_X = _select_views(raw_views, args, [0, 1])
+        label_y = np.squeeze(np.hstack((mat["y_train"], mat["y_test"])))
+
     elif args.dataset in ("Handwritten", "HandWritten"):
         filename = "Handwritten.mat"
         if not os.path.exists(os.path.join(args.data_path, filename)):
