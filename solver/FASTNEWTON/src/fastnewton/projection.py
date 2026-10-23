@@ -23,7 +23,7 @@ def project(
     matrix: torch.Tensor,
     *,
     relative_tol: float = 1.0e-3,
-    max_iter: int = 50,
+    max_iter: int = 200,
     return_info: bool = False,
     raise_on_failure: bool = False,
     **solver_options: Any,
