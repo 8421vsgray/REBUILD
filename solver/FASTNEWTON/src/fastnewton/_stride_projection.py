@@ -192,7 +192,7 @@ class EuclideanProjector:
     def project(
         matrix,
         marginal,
-        max_iter=50,
+        max_iter=200,
         relative_tol=1.0e-3,
         schur_ridge=1.0e-6,
         fallback_iters=100,

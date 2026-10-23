@@ -44,7 +44,7 @@ class FastNewtonEuclideanProjector(TransportProjector):
         self,
         *,
         relative_tolerance: float = 1.0e-3,
-        max_iterations: int = 50,
+        max_iterations: int = 200,
         absolute_tolerance: float = 1.0e-8,
         certificate_tolerance: Optional[float] = None,
         warm_start: bool = True,
