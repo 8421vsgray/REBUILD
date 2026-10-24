@@ -1,23 +1,16 @@
+# Selected completed MR=0.8 configuration; five seeds start at seed 1.
 dataset: Handwritten
 data_path: dataset
 data_norm: standard
-view_indices:
-- 0
-- 1
+# Handwritten.mat contains two views in this order: 240-D pixels, then 76-D Fourier.
+view_indices: [0, 1]
 n_views: 2
 n_classes: 10
 encoder_dim:
-- - 240
-  - 1024
-  - 1024
-  - 1024
-  - 128
-- - 76
-  - 1024
-  - 1024
-  - 1024
-  - 128
-batch_size: 1024
+  - [240, 1024, 1024, 1024, 128]
+  - [76, 1024, 1024, 1024, 128]
+batch_size: 2000
+eval_batch_size: 2000
 epochs: 200
 warmup_epochs: 20
 diagonal_epochs: 20
@@ -26,18 +19,17 @@ min_blr: 0.0002
 weight_decay: 0.0
 momentum: 0.98
 temperature: 0.5
-drop_rate: 0.2
+drop_rate: 0.4
+ema_dropout: 0.0
 m_ratio: 0.8
 device: cuda:0
 seed: 1
-output_dir: output/stride_main_mr08_seed1/Handwritten
+num_runs: 5
+output_dir: output
 init: diagonal
-steps: 5
-step_size: 0.02
-config_version: 1
+steps: 8
+step_size: 0.01
 algorithm: stride_gw
-eval_batch_size: 1024
-num_runs: 1
 solver:
   backend: fastnewton
   relative_tol: 0.001

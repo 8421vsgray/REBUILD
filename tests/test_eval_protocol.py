@@ -71,17 +71,17 @@ class EvaluationProtocolTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             resolve_batch_sizes(make_args(batch_size=4, eval_batch_size=0), 5, 7)
 
-    def test_batch_size_1024_is_supported_and_above_1024_is_rejected(self):
+    def test_batch_size_2000_is_supported_and_above_2000_is_rejected(self):
         train_batch_size, eval_batch_size = resolve_batch_sizes(
-            make_args(batch_size=1024, eval_batch_size=1024), 2048, 2048
+            make_args(batch_size=2000, eval_batch_size=2000), 2048, 2048
         )
-        self.assertEqual(train_batch_size, 1024)
-        self.assertEqual(eval_batch_size, 1024)
+        self.assertEqual(train_batch_size, 2000)
+        self.assertEqual(eval_batch_size, 2000)
         with self.assertRaises(ValueError):
-            resolve_batch_sizes(make_args(batch_size=1025), 2048, 2048)
+            resolve_batch_sizes(make_args(batch_size=2001), 2048, 2048)
         with self.assertRaises(ValueError):
             resolve_batch_sizes(
-                make_args(batch_size=512, eval_batch_size=1025), 2048, 2048
+                make_args(batch_size=512, eval_batch_size=2001), 2048, 2048
             )
 
     def test_experiment_folder_uses_explicit_protocol_names(self):

@@ -16,16 +16,22 @@ class FastNewtonAdapterTests(unittest.TestCase):
         self.assertEqual(projector.max_iterations, 50)
         self.assertEqual(projector.relative_tolerance, 1.0e-3)
 
-    def test_factory_rejects_drot_options_for_fastnewton(self):
-        with self.assertRaises(ValueError):
+    def test_factory_rejects_removed_drot_backend(self):
+        with self.assertRaisesRegex(ValueError, "drot.*removed"):
             projector_from_solver_config(
-                {
-                    "backend": "fastnewton",
-                    "relative_tol": 1.0e-3,
-                    "max_iter": 50,
-                    "rho": 2.0,
-                }
+                {"backend": "drot", "rho": 2.0, "eps": 1.0e-6, "max_iter": 50}
             )
+
+    def test_factory_forwards_fastnewton_warm_start_setting(self):
+        projector = projector_from_solver_config(
+            {
+                "backend": "fastnewton",
+                "relative_tol": 1.0e-3,
+                "max_iter": 50,
+                "warm_start": False,
+            }
+        )
+        self.assertFalse(projector.warm_start)
 
     def test_warm_state_is_reused_then_cleared_after_failure(self):
         class FakeBackend:

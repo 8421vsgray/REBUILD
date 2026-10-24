@@ -138,13 +138,13 @@ class DataProtocolTests(unittest.TestCase):
         config_path = os.path.join(
             os.path.dirname(os.path.dirname(__file__)),
             "config",
-            "Scene15_MR08.yaml",
+            "scene15.yaml",
         )
         parsed = load_config_file(config_path)
         self.assertEqual(parsed["view_indices"], [1, 0])
-        self.assertEqual(parsed["num_runs"], 1)
+        self.assertEqual(parsed["num_runs"], 5)
         self.assertEqual(parsed["start_rectify_epoch"], 20)
-        self.assertEqual(parsed["solver"]["backend"], "drot")
+        self.assertEqual(parsed["solver"]["backend"], "fastnewton")
 
     def test_run_output_directory_is_seeded_and_non_overwriting(self):
         with tempfile.TemporaryDirectory() as output_dir:

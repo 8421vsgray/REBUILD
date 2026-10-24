@@ -15,7 +15,6 @@ from typing import Any, Mapping
 import torch
 import torch.nn.functional as F
 
-from solver.drot_adapter import DrotEuclideanProjector
 from solver.projection_interface import TransportProjector, validate_transport_plan
 
 
@@ -368,40 +367,45 @@ def generate_bidirectional_gw_targets(
 
 
 def projector_from_solver_config(solver_config: Mapping[str, Any]) -> TransportProjector:
-    """Construct the configured projector without mixing backend options."""
+    """Construct FASTNEWTON with its own explicit solver configuration."""
     backend = str(solver_config.get("backend", "")).lower()
     if backend == "drot":
-        required = {"backend", "rho", "eps", "max_iter"}
-        missing = sorted(required.difference(solver_config))
-        if missing:
-            raise ValueError("solver config missing: {}".format(", ".join(missing)))
-        return DrotEuclideanProjector(
-            rho=float(solver_config["rho"]),
-            solver_eps=float(solver_config["eps"]),
-            max_iterations=int(solver_config["max_iter"]),
+        raise ValueError(
+            "solver.backend 'drot' has been removed; use 'fastnewton'"
         )
-    if backend == "fastnewton":
-        required = {"backend", "relative_tol", "max_iter"}
-        missing = sorted(required.difference(solver_config))
-        if missing:
-            raise ValueError("solver config missing: {}".format(", ".join(missing)))
-        mixed = sorted({"rho", "eps"}.intersection(solver_config))
-        if mixed:
-            raise ValueError(
-                "FASTNEWTON solver config must not contain DROT options: {}".format(
-                    ", ".join(mixed)
-                )
-            )
-        from solver.fastnewton_adapter import FastNewtonEuclideanProjector
+    if backend != "fastnewton":
+        raise ValueError("unsupported GW projector backend: {}".format(backend))
 
-        return FastNewtonEuclideanProjector(
-            relative_tolerance=float(solver_config["relative_tol"]),
-            max_iterations=int(solver_config["max_iter"]),
-            absolute_tolerance=float(solver_config.get("absolute_tol", 1.0e-8)),
-            certificate_tolerance=(
-                None
-                if "certificate_tol" not in solver_config
-                else float(solver_config["certificate_tol"])
-            ),
+    allowed = {
+        "backend",
+        "relative_tol",
+        "max_iter",
+        "absolute_tol",
+        "certificate_tol",
+        "warm_start",
+    }
+    unknown = sorted(set(solver_config).difference(allowed))
+    if unknown:
+        raise ValueError(
+            "Unsupported FASTNEWTON solver field(s): {}".format(
+                ", ".join(unknown)
+            )
         )
-    raise ValueError("unsupported GW projector backend: {}".format(backend))
+    required = {"backend", "relative_tol", "max_iter"}
+    missing = sorted(required.difference(solver_config))
+    if missing:
+        raise ValueError("solver config missing: {}".format(", ".join(missing)))
+
+    from solver.fastnewton_adapter import FastNewtonEuclideanProjector
+
+    return FastNewtonEuclideanProjector(
+        relative_tolerance=float(solver_config["relative_tol"]),
+        max_iterations=int(solver_config["max_iter"]),
+        absolute_tolerance=float(solver_config.get("absolute_tol", 1.0e-8)),
+        certificate_tolerance=(
+            None
+            if "certificate_tol" not in solver_config
+            else float(solver_config["certificate_tol"])
+        ),
+        warm_start=solver_config.get("warm_start", True),
+    )

@@ -32,6 +32,7 @@ SUPPORTED_CONFIG_FIELDS = {
     "diagonal_epochs",
     "device",
     "drop_rate",
+    "ema_dropout",
     "target_drop_rate",
     "embed_dim",
     "encoder_dim",
@@ -73,8 +74,6 @@ SUPPORTED_CONFIG_FIELDS = {
 }
 SOLVER_CONFIG_FIELDS = {
     "backend",
-    "rho",
-    "eps",
     "max_iter",
     "relative_tol",
     "absolute_tol",
@@ -140,10 +139,16 @@ def get_args_parser():
     parser.add_argument("--temperature", type=float, default=0.5)
     parser.add_argument("--start_rectify_epoch", type=int, default=20)
     parser.add_argument(
+        "--ema_dropout",
+        type=float,
+        default=None,
+        help="EMA target encoder dropout; defaults to drop_rate",
+    )
+    parser.add_argument(
         "--target_drop_rate",
         type=float,
         default=None,
-        help="dropout probability in the EMA target encoder; defaults to drop_rate",
+        help="deprecated alias for --ema_dropout",
     )
     parser.add_argument("--momentum", type=float, default=0.99)
     parser.add_argument("--drop_rate", type=float, default=0.2)
@@ -319,8 +324,16 @@ def _validate_standard_config(configs):
         raise ValueError("formal eval_batch_size must be a positive integer <= {}".format(MAX_FORMAL_BATCH_SIZE))
     if not 0.0 <= float(configs["m_ratio"]) <= 1.0:
         raise ValueError("m_ratio must be in [0, 1]")
-    if "target_drop_rate" in configs and not 0.0 <= float(configs["target_drop_rate"]) <= 1.0:
-        raise ValueError("target_drop_rate must be in [0, 1]")
+    if (
+        configs.get("ema_dropout") is not None
+        and configs.get("target_drop_rate") is not None
+        and float(configs["ema_dropout"]) != float(configs["target_drop_rate"])
+    ):
+        raise ValueError("ema_dropout and deprecated target_drop_rate cannot disagree")
+    for field in ("ema_dropout", "target_drop_rate"):
+        if field in configs and configs[field] is not None:
+            if not 0.0 <= float(configs[field]) < 1.0:
+                raise ValueError("{} must be in [0, 1)".format(field))
     if configs["init"] != "diagonal":
         raise ValueError("the current STRIDE configuration requires init=diagonal")
     if not _is_integer(configs["steps"]) or configs["steps"] <= 0:
@@ -405,51 +418,60 @@ def _validate_standard_config(configs):
     solver = configs["solver"]
     if not isinstance(solver, dict):
         raise ValueError("solver must be a mapping")
+    backend = str(solver.get("backend", "")).lower()
+    if backend == "drot":
+        raise ValueError(
+            "solver.backend 'drot' has been removed; use 'fastnewton'"
+        )
+    if {"rho", "eps"}.intersection(solver):
+        raise ValueError(
+            "DROT solver fields rho and eps were removed; configure FASTNEWTON instead"
+        )
     unknown_solver_fields = sorted(set(solver).difference(SOLVER_CONFIG_FIELDS))
     if unknown_solver_fields:
         raise ValueError(
             "Unknown solver field(s): {}".format(", ".join(unknown_solver_fields))
         )
-    backend = solver.get("backend")
-    if backend == "drot":
-        required = {"backend", "rho", "eps", "max_iter"}
-        missing_solver_fields = sorted(required.difference(solver))
-        if missing_solver_fields:
-            raise ValueError(
-                "DROT solver config is missing: {}".format(
-                    ", ".join(missing_solver_fields)
-                )
+    if backend != "fastnewton":
+        raise ValueError("solver.backend must be fastnewton")
+    required = {"backend", "relative_tol", "max_iter"}
+    missing_solver_fields = sorted(required.difference(solver))
+    if missing_solver_fields:
+        raise ValueError(
+            "FASTNEWTON solver config is missing: {}".format(
+                ", ".join(missing_solver_fields)
             )
-        if float(solver["rho"]) <= 0:
-            raise ValueError("solver.rho must be positive")
-        if float(solver["eps"]) <= 0:
-            raise ValueError("solver.eps must be positive")
-        if not _is_integer(solver["max_iter"]) or solver["max_iter"] <= 0:
-            raise ValueError("solver.max_iter must be a positive integer")
-    elif backend == "fastnewton":
-        if {"rho", "eps"}.intersection(solver):
-            raise ValueError(
-                "FASTNEWTON solver config must not contain DROT fields rho or eps"
-            )
-        required = {"backend", "relative_tol", "max_iter"}
-        missing_solver_fields = sorted(required.difference(solver))
-        if missing_solver_fields:
-            raise ValueError(
-                "FASTNEWTON solver config is missing: {}".format(
-                    ", ".join(missing_solver_fields)
-                )
-            )
-        if float(solver["relative_tol"]) <= 0:
-            raise ValueError("solver.relative_tol must be positive")
-        for field in ("absolute_tol", "certificate_tol"):
-            if field in solver and float(solver[field]) <= 0:
-                raise ValueError("solver.{} must be positive".format(field))
-        if "warm_start" in solver and not isinstance(solver["warm_start"], bool):
-            raise ValueError("solver.warm_start must be boolean")
-        if not _is_integer(solver["max_iter"]) or solver["max_iter"] <= 0:
-            raise ValueError("solver.max_iter must be a positive integer")
-    else:
-        raise ValueError("solver.backend must be drot or fastnewton")
+        )
+    if float(solver["relative_tol"]) <= 0:
+        raise ValueError("solver.relative_tol must be positive")
+    for field in ("absolute_tol", "certificate_tol"):
+        if field in solver and float(solver[field]) <= 0:
+            raise ValueError("solver.{} must be positive".format(field))
+    if "warm_start" in solver and not isinstance(solver["warm_start"], bool):
+        raise ValueError("solver.warm_start must be boolean")
+    if not _is_integer(solver["max_iter"]) or solver["max_iter"] <= 0:
+        raise ValueError("solver.max_iter must be a positive integer")
+
+
+def finalize_ema_dropout(args):
+    """Resolve the EMA dropout setting and its deprecated compatibility alias."""
+    ema_value = args.ema_dropout
+    legacy_value = args.target_drop_rate
+    if (
+        ema_value is not None
+        and legacy_value is not None
+        and float(ema_value) != float(legacy_value)
+    ):
+        raise ValueError(
+            "ema_dropout and deprecated target_drop_rate cannot disagree"
+        )
+    if ema_value is None:
+        ema_value = legacy_value if legacy_value is not None else args.drop_rate
+    ema_value = float(ema_value)
+    if not 0.0 <= ema_value < 1.0:
+        raise ValueError("ema_dropout must be in [0, 1)")
+    args.ema_dropout = ema_value
+    args.target_drop_rate = None
 
 
 def resolve_config_path(config_file):
@@ -570,7 +592,7 @@ def train_one_time(args, state_logger):
         temperature=args.temperature,
         n_classes=args.n_classes,
         drop_rate=args.drop_rate,
-        target_drop_rate=args.target_drop_rate,
+        ema_dropout=args.ema_dropout,
         beta=args.beta,
         reg=args.reg,
         rho=args.rho,
@@ -696,9 +718,13 @@ if __name__ == "__main__":
         config_path = resolve_config_path(args.config_file)
         configs = load_config_file(config_path)
         args = vars(args)
+        if "ema_dropout" in configs or "target_drop_rate" in configs:
+            args["ema_dropout"] = None
+            args["target_drop_rate"] = None
         args.update(configs)
         args["config_path"] = str(config_path)
         args = argparse.Namespace(**args)
+    finalize_ema_dropout(args)
     finalize_run_count(args)
 
     if args.validate_config:

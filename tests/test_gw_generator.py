@@ -12,7 +12,6 @@ from pseudolabel.gw import (
     projector_from_solver_config,
     relation_matrix,
 )
-from solver.drot_adapter import DrotEuclideanProjector
 from solver.projection_interface import (
     ProjectionDiagnostics,
     ProjectionResult,
@@ -26,13 +25,6 @@ try:
 except ImportError:
     cp = None
     HAS_CVXPY = False
-
-try:
-    import reg_drot  # noqa: F401
-
-    HAS_DROT = True
-except (ImportError, OSError):
-    HAS_DROT = False
 
 
 class RecordingProjector(TransportProjector):
@@ -207,14 +199,11 @@ class GWGeneratorTests(unittest.TestCase):
                 RecordingProjector(),
             )
 
-    def test_solver_parameters_are_explicitly_constructed(self):
-        projector = projector_from_solver_config(
-            {"backend": "drot", "rho": 3.0, "eps": 1e-7, "max_iter": 1234}
-        )
-        self.assertIsInstance(projector, DrotEuclideanProjector)
-        self.assertEqual(projector.rho, 3.0)
-        self.assertEqual(projector.solver_eps, 1e-7)
-        self.assertEqual(projector.max_iterations, 1234)
+    def test_removed_drot_backend_is_rejected_explicitly(self):
+        with self.assertRaisesRegex(ValueError, "drot.*removed"):
+            projector_from_solver_config(
+                {"backend": "drot", "rho": 3.0, "eps": 1e-7, "max_iter": 1234}
+            )
 
     def test_projection_failure_is_not_replaced(self):
         with self.assertRaises(GWProjectionFailure):
@@ -289,28 +278,38 @@ class GWGeneratorTests(unittest.TestCase):
                     expected.sum(dim=1), marginal, atol=1e-7, rtol=1e-7
                 )
 
-    @unittest.skipUnless(
-        HAS_DROT and torch.cuda.is_available(), "DROT CUDA extension is unavailable"
-    )
-    def test_drot_projection_matches_cvxpy_at_small_sizes(self):
-        torch.manual_seed(29)
-        projector = DrotEuclideanProjector(
-            rho=4.0, solver_eps=1e-6, max_iterations=20_000
+    @unittest.skipUnless(HAS_CVXPY, "cvxpy is not installed")
+    def test_fastnewton_projection_matches_cvxpy_at_small_sizes(self):
+        from solver.fastnewton_adapter import FastNewtonEuclideanProjector
+
+        projector = FastNewtonEuclideanProjector(
+            relative_tolerance=1.0e-3, max_iterations=200
         )
-        for batch_size in (2, 4, 8, 16, 32):
+        if not projector.available:
+            self.skipTest(f"FASTNEWTON is not installed: {projector.backend_error}")
+        torch.manual_seed(29)
+        for batch_size in (2, 4, 8):
             with self.subTest(batch_size=batch_size):
-                candidate = torch.randn(batch_size, batch_size, device="cuda")
+                candidate = (
+                    0.1 * torch.eye(batch_size, dtype=torch.float64)
+                    + 0.01 * torch.randn(batch_size, batch_size, dtype=torch.float64)
+                )
                 marginal = torch.full(
-                    (batch_size,), 1.0 / batch_size, device="cuda"
+                    (batch_size,), 1.0 / batch_size, dtype=torch.float64
                 )
                 result = projector.project(candidate, marginal, marginal)
-                self.assertEqual(result.diagnostics.status, "success")
+                self.assertIn(result.diagnostics.status, {"success", "feasible_only"})
+                self.assertLessEqual(result.diagnostics.row_relative_residual, 1.0e-3)
+                self.assertLessEqual(result.diagnostics.col_relative_residual, 1.0e-3)
                 variable = cp.Variable((batch_size, batch_size), nonneg=True)
-                candidate_np = candidate.cpu().numpy()
+                candidate_np = candidate.numpy()
                 vector = np.full(batch_size, 1.0 / batch_size)
                 problem = cp.Problem(
                     cp.Minimize(0.5 * cp.sum_squares(variable - candidate_np)),
-                    [variable @ np.ones(batch_size) == vector, variable.T @ np.ones(batch_size) == vector],
+                    [
+                        variable @ np.ones(batch_size) == vector,
+                        variable.T @ np.ones(batch_size) == vector,
+                    ],
                 )
                 problem.solve(
                     solver=cp.CLARABEL,
@@ -321,8 +320,9 @@ class GWGeneratorTests(unittest.TestCase):
                 self.assertEqual(problem.status, cp.OPTIMAL)
                 expected = torch.from_numpy(variable.value)
                 self.assertLessEqual(
-                    float((result.plan.cpu() - expected).abs().max()), 1e-3
+                    float((result.plan - expected).abs().max()), 1.0e-3
                 )
+                projector.reset_state()
 
 
 if __name__ == "__main__":

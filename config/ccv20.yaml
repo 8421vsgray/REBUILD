@@ -1,23 +1,15 @@
+# Selected completed MR=0.8 configuration; five seeds start at seed 1.
 dataset: CCV20
 data_path: dataset
 data_norm: l2-norm
-view_indices:
-- 1
-- 2
+view_indices: [1, 2]
 n_views: 2
 n_classes: 20
 encoder_dim:
-- - 20
-  - 1024
-  - 1024
-  - 1024
-  - 128
-- - 20
-  - 1024
-  - 1024
-  - 1024
-  - 128
+  - [20, 1024, 1024, 1024, 128]
+  - [20, 1024, 1024, 1024, 128]
 batch_size: 512
+eval_batch_size: 512
 epochs: 200
 warmup_epochs: 20
 diagonal_epochs: 20
@@ -25,19 +17,22 @@ blr: 0.0005
 min_blr: 0.0005
 weight_decay: 0.0
 momentum: 0.8
-temperature: 1.0
+temperature: 0.5
 drop_rate: 0.2
+ema_dropout: 0.2
 m_ratio: 0.8
 device: cuda:0
 seed: 1
-output_dir: output/stride_main_mr08_seed1/CCV20
+num_runs: 5
+output_dir: output
 init: diagonal
 steps: 5
 step_size: 0.02
-config_version: 1
 algorithm: stride_gw
-eval_batch_size: 512
-num_runs: 1
+prior_gate:
+  lock: true
+  lockmass: 0.1
+  on_projection_failure: true
 solver:
   backend: fastnewton
   relative_tol: 0.001

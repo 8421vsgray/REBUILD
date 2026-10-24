@@ -1,4 +1,4 @@
-"""Shared runtime checks for REBUILD numerical validation scripts."""
+"""Preflight the installed FASTNEWTON runtime before validation runs."""
 
 from __future__ import annotations
 
@@ -10,52 +10,58 @@ import torch
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DROT_PYTHON_ROOT = PROJECT_ROOT / "solver" / "Regularized-DROT" / "pytorch"
 
 
 def ensure_import_paths() -> None:
-    """Make the project and compiled third-party extension importable."""
-    for path in (PROJECT_ROOT, DROT_PYTHON_ROOT):
-        path_string = str(path)
-        if path_string not in sys.path:
-            sys.path.insert(0, path_string)
+    """Make the REBUILD project importable without injecting solver source paths."""
+    project_root = str(PROJECT_ROOT)
+    if project_root not in sys.path:
+        sys.path.insert(0, project_root)
 
 
 def preflight() -> dict[str, object]:
-    """Fail before a batch run if the actual numerical backend is unavailable."""
+    """Run a small verified projection using the installed FASTNEWTON package."""
     ensure_import_paths()
-    if not torch.cuda.is_available():
-        raise RuntimeError("CUDA is unavailable")
     try:
-        import reg_drot
+        import fastnewton
     except (ImportError, OSError) as error:
-        raise RuntimeError(f"reg_drot import failed: {error}") from error
+        raise RuntimeError(
+            "FASTNEWTON is not installed; run `python -m pip install -e ./solver/FASTNEWTON`"
+        ) from error
 
-    device = torch.device("cuda")
-    cost = torch.tensor([[0.0, 1.0], [1.0, 0.0]], device=device, dtype=torch.float32)
-    marginal = torch.full((2,), 0.5, device=device, dtype=torch.float32)
-    plan = reg_drot.quadratic_drot(
-        cost,
-        marginal,
-        marginal,
-        4.0,
-        0.25,
-        1000,
-        1e-5,
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    candidate = torch.tensor(
+        [[1.0, 0.0], [0.0, 1.0]], device=device, dtype=torch.float32
     )
-    torch.cuda.synchronize()
-    if not isinstance(plan, torch.Tensor) or plan.shape != cost.shape:
-        raise RuntimeError("reg_drot preflight returned an invalid plan")
-    if not torch.isfinite(plan).all().item():
-        raise RuntimeError("reg_drot preflight returned non-finite values")
+    plan, info = fastnewton.project(
+        candidate, relative_tol=1.0e-3, max_iter=200, return_info=True
+    )
+    if device.type == "cuda":
+        torch.cuda.synchronize(device)
+    status = str(info.get("status", "unknown"))
+    if status != "verified":
+        raise RuntimeError(f"FASTNEWTON preflight was not verified: {info}")
+    marginal = torch.full((2,), 0.5, device=device, dtype=plan.dtype)
+    row_error = (plan.sum(dim=1) - marginal).abs().max().item()
+    col_error = (plan.sum(dim=0) - marginal).abs().max().item()
+    if not torch.isfinite(plan).all().item() or float(plan.min()) < -1.0e-7:
+        raise RuntimeError("FASTNEWTON preflight returned an invalid plan")
+    if max(row_error, col_error) > 1.0e-3:
+        raise RuntimeError(
+            f"FASTNEWTON preflight marginal check failed: row={row_error}, col={col_error}"
+        )
     return {
         "python": sys.executable,
         "project_root": str(PROJECT_ROOT),
-        "drot_python_root": str(DROT_PYTHON_ROOT),
         "torch_version": torch.__version__,
         "torch_cuda": torch.version.cuda,
-        "device": torch.cuda.get_device_name(),
-        "reg_drot_module": str(Path(reg_drot.__file__).resolve()),
+        "device": str(device),
+        "gpu": torch.cuda.get_device_name(device) if device.type == "cuda" else None,
+        "fastnewton_module": str(Path(fastnewton.__file__).resolve()),
+        "status": status,
+        "iterations": info.get("iterations"),
+        "row_residual": row_error,
+        "col_residual": col_error,
     }
 
 

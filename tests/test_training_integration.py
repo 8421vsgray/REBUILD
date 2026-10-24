@@ -180,9 +180,13 @@ class TrainingIntegrationTests(unittest.TestCase):
 
     def test_fastnewton_yaml_is_accepted_and_drot_fields_are_rejected(self):
         config = main_train.load_config_file(
-            main_train.resolve_config_path("config/Scene15_MR08_FASTNEWTON.yaml")
+            main_train.resolve_config_path("config/scene15.yaml")
         )
         self.assertEqual(config["solver"]["backend"], "fastnewton")
+        with self.assertRaisesRegex(ValueError, "drot.*removed"):
+            main_train._validate_standard_config(
+                {**config, "solver": {"backend": "drot", "rho": 2.0, "eps": 1e-6, "max_iter": 100}}
+            )
         mixed = copy.deepcopy(config)
         mixed["solver"]["rho"] = 2.0
         with self.assertRaises(ValueError):
@@ -190,7 +194,7 @@ class TrainingIntegrationTests(unittest.TestCase):
 
     def test_prior_gate_lock_and_lockmass_controls(self):
         config = main_train.load_config_file(
-            main_train.resolve_config_path("config/Scene15_MR08_FASTNEWTON.yaml")
+            main_train.resolve_config_path("config/scene15.yaml")
         )
         config = copy.deepcopy(config)
         config["prior_gate"] = {

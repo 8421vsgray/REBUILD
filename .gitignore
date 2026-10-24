@@ -3,21 +3,24 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 
-# Training artifacts (keep experiment metadata outside Git)
+# Local project notes, datasets, and experiment artifacts
+/docs/
+dataset/*.mat
+data/
 output/
 runs/
 run_logs/
+logs/
 checkpoints/
 *.pt
 *.pth
 *.ckpt
 
-# Local environment files
+# Local environments and generated artifacts
 .venv/
 venv/
 .env
-
-# Generated third-party CUDA build and offline validation artifacts
 .artifacts/
-solver/Regularized-DROT/pytorch/build/
-solver/Regularized-DROT/pytorch/*.so
+
+# Python package build metadata
+*.egg-info/

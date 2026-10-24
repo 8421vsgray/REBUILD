@@ -11,9 +11,8 @@ from .projection_interface import (
 class DykstraEuclideanProjector(TransportProjector):
     """Independent CPU reference for Euclidean projection onto a transport polytope.
 
-    The production DROT adapter must be validated against this backend on small
-    problems. This implementation is intentionally simple and is not a
-    replacement for a GPU solver.
+    This test-only implementation provides an independent reference for small
+    problems. It is intentionally simple and is not used by the training path.
     """
 
     def __init__(self, max_iterations=10_000, relative_tolerance=1e-8):

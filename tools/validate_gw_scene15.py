@@ -1,4 +1,4 @@
-"""Run the standalone GW+DROT generator on one real Scene15 batch."""
+"""Run the standalone GW+FASTNEWTON generator on one real Scene15 batch."""
 
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ def _compact_diagnostics(diagnostics):
 
 
 def main():
-    config_path = Path("config/Scene15_MR08.yaml")
+    config_path = Path("config/scene15.yaml")
     with config_path.open(encoding="utf-8") as stream:
         config = yaml.safe_load(stream)
 
