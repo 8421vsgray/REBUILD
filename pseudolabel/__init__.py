@@ -3,6 +3,7 @@ from .gw import (
     generate_bidirectional_gw_targets,
     generate_gw_targets,
     gw_gradient,
+    pointwise_gradient,
     relation_matrix,
     projector_from_solver_config,
 )
@@ -12,6 +13,7 @@ __all__ = [
     "generate_bidirectional_gw_targets",
     "generate_gw_targets",
     "gw_gradient",
+    "pointwise_gradient",
     "relation_matrix",
     "projector_from_solver_config",
 ]

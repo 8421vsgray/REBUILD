@@ -18,9 +18,10 @@ from model import CorreGenBaselineModel
 
 warnings.filterwarnings("ignore")
 
-MAX_FORMAL_BATCH_SIZE = 1024
+MAX_FORMAL_BATCH_SIZE = 2000
 SUPPORTED_CONFIG_FIELDS = {
     "algorithm",
+    "alignment_diagnostics",
     "batch_size",
     "beta",
     "blr",
@@ -31,6 +32,7 @@ SUPPORTED_CONFIG_FIELDS = {
     "diagonal_epochs",
     "device",
     "drop_rate",
+    "target_drop_rate",
     "embed_dim",
     "encoder_dim",
     "epochs",
@@ -61,6 +63,7 @@ SUPPORTED_CONFIG_FIELDS = {
     "start_rectify_epoch",
     "step_size",
     "steps",
+    "transport_gradient",
     "temperature",
     "threads",
     "train_time",
@@ -85,6 +88,11 @@ PRIOR_GATE_CONFIG_FIELDS = {
     "offdiag_tol",
     "raw_offdiag_tol",
     "on_projection_failure",
+}
+ALIGNMENT_DIAGNOSTIC_FIELDS = {
+    "enabled",
+    "output_subdir",
+    "softmax_temperatures",
 }
 STANDARD_CONFIG_REQUIRED_FIELDS = {
     "algorithm",
@@ -131,6 +139,12 @@ def get_args_parser():
     # model parameters
     parser.add_argument("--temperature", type=float, default=0.5)
     parser.add_argument("--start_rectify_epoch", type=int, default=20)
+    parser.add_argument(
+        "--target_drop_rate",
+        type=float,
+        default=None,
+        help="dropout probability in the EMA target encoder; defaults to drop_rate",
+    )
     parser.add_argument("--momentum", type=float, default=0.99)
     parser.add_argument("--drop_rate", type=float, default=0.2)
     parser.add_argument("--n_views", type=int, default=2, help="number of views")
@@ -297,20 +311,29 @@ def _validate_standard_config(configs):
         not _is_integer(configs["batch_size"])
         or not 0 < configs["batch_size"] <= MAX_FORMAL_BATCH_SIZE
     ):
-        raise ValueError("formal batch_size must be an integer in [1, 512]")
+        raise ValueError("formal batch_size must be a positive integer <= {}".format(MAX_FORMAL_BATCH_SIZE))
     if "eval_batch_size" in configs and (
         not _is_integer(configs["eval_batch_size"])
         or not 0 < configs["eval_batch_size"] <= MAX_FORMAL_BATCH_SIZE
     ):
-        raise ValueError("formal eval_batch_size must be an integer in [1, 512]")
+        raise ValueError("formal eval_batch_size must be a positive integer <= {}".format(MAX_FORMAL_BATCH_SIZE))
     if not 0.0 <= float(configs["m_ratio"]) <= 1.0:
         raise ValueError("m_ratio must be in [0, 1]")
+    if "target_drop_rate" in configs and not 0.0 <= float(configs["target_drop_rate"]) <= 1.0:
+        raise ValueError("target_drop_rate must be in [0, 1]")
     if configs["init"] != "diagonal":
         raise ValueError("the current STRIDE configuration requires init=diagonal")
     if not _is_integer(configs["steps"]) or configs["steps"] <= 0:
         raise ValueError("steps must be a positive integer")
     if float(configs["step_size"]) <= 0:
         raise ValueError("step_size must be positive")
+    transport_gradient = str(
+        configs.get("transport_gradient", "structural")
+    ).lower()
+    if transport_gradient not in {"structural", "pointwise"}:
+        raise ValueError(
+            "transport_gradient must be structural or pointwise"
+        )
 
     if "prior_gate" in configs:
         prior_gate = configs["prior_gate"]
@@ -340,6 +363,44 @@ def _validate_standard_config(configs):
             prior_gate["on_projection_failure"], bool
         ):
             raise ValueError("prior_gate.on_projection_failure must be boolean")
+
+    if "alignment_diagnostics" in configs:
+        alignment_diagnostics = configs["alignment_diagnostics"]
+        if not isinstance(alignment_diagnostics, dict):
+            raise ValueError("alignment_diagnostics must be a mapping")
+        unknown_alignment_fields = sorted(
+            set(alignment_diagnostics).difference(ALIGNMENT_DIAGNOSTIC_FIELDS)
+        )
+        if unknown_alignment_fields:
+            raise ValueError(
+                "Unknown alignment_diagnostics field(s): {}".format(
+                    ", ".join(unknown_alignment_fields)
+                )
+            )
+        if "enabled" in alignment_diagnostics and not isinstance(
+            alignment_diagnostics["enabled"], bool
+        ):
+            raise ValueError("alignment_diagnostics.enabled must be boolean")
+        if "output_subdir" in alignment_diagnostics:
+            output_subdir = alignment_diagnostics["output_subdir"]
+            if not isinstance(output_subdir, str) or not output_subdir:
+                raise ValueError(
+                    "alignment_diagnostics.output_subdir must be a non-empty string"
+                )
+            if Path(output_subdir).is_absolute() or ".." in Path(output_subdir).parts:
+                raise ValueError(
+                    "alignment_diagnostics.output_subdir must stay inside output_dir"
+                )
+        if "softmax_temperatures" in alignment_diagnostics:
+            temperatures = alignment_diagnostics["softmax_temperatures"]
+            if not isinstance(temperatures, list) or not temperatures:
+                raise ValueError(
+                    "alignment_diagnostics.softmax_temperatures must be a non-empty list"
+                )
+            if any(float(value) <= 0.0 for value in temperatures):
+                raise ValueError(
+                    "alignment_diagnostics.softmax_temperatures must be positive"
+                )
 
     solver = configs["solver"]
     if not isinstance(solver, dict):
@@ -509,6 +570,7 @@ def train_one_time(args, state_logger):
         temperature=args.temperature,
         n_classes=args.n_classes,
         drop_rate=args.drop_rate,
+        target_drop_rate=args.target_drop_rate,
         beta=args.beta,
         reg=args.reg,
         rho=args.rho,

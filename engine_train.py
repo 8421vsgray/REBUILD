@@ -1,5 +1,6 @@
 import math
 import sys
+from pathlib import Path
 import torch
 from model import CorreGenBaselineModel
 from torch.utils.data import DataLoader
@@ -57,6 +58,7 @@ def train_one_epoch(
     epoch_prior_locked = False
     epoch_prior_lock_reason = None
     epoch_prior_gate_decided = False
+    alignment_diagnostics = _start_alignment_diagnostics(args, epoch)
     if is_stride_gw and projector is None:
         projector = projector_from_solver_config(args.solver)
     model.train(True)
@@ -98,6 +100,9 @@ def train_one_epoch(
                                         "init": args.init,
                                         "steps": args.steps,
                                         "step_size": args.step_size,
+                                        "transport_gradient": getattr(
+                                            args, "transport_gradient", "structural"
+                                        ),
                                         "prior_gate_precheck": (
                                             prior_gate_enabled
                                             and not epoch_prior_gate_decided
@@ -169,6 +174,40 @@ def train_one_epoch(
                                     p21_offdiag=p21_offdiag,
                                     epoch_prior_lock=float(epoch_prior_locked),
                                 )
+                if alignment_diagnostics is not None:
+                    if training_phase["rectify"]:
+                        _record_alignment_batch(
+                            alignment_diagnostics,
+                            idx,
+                            id1,
+                            id2,
+                            None,
+                            None,
+                            gw_executed=False,
+                            prior_locked=False,
+                        )
+                    elif epoch_prior_locked:
+                        _record_alignment_batch(
+                            alignment_diagnostics,
+                            idx,
+                            id1,
+                            id2,
+                            None,
+                            None,
+                            gw_executed=False,
+                            prior_locked=True,
+                        )
+                    else:
+                        _record_alignment_batch(
+                            alignment_diagnostics,
+                            idx,
+                            id1,
+                            id2,
+                            inter_targets[0],
+                            inter_targets[1],
+                            gw_executed=True,
+                            prior_locked=False,
+                        )
                 loss = model.loss_from_training_features(z, p, z_t, inter_targets)
             else:
                 dist = None
@@ -194,6 +233,9 @@ def train_one_epoch(
             metric_logger.update(lr=lr)
             metric_logger.update(loss=loss_value)
 
+    if alignment_diagnostics is not None:
+        _save_alignment_diagnostics(alignment_diagnostics, epoch, args)
+
     if not is_stride_gw and epoch == args.start_guide_epoch:
         update_infoBuffer(infolist, model, data_loader_train, device, args, epoch, 'init')
     elif not is_stride_gw and epoch > args.start_guide_epoch:
@@ -204,6 +246,116 @@ def train_one_epoch(
     else:
         eval_result = None
     return eval_result
+
+
+def _start_alignment_diagnostics(args, epoch):
+    """Create opt-in per-sample GW diagnostics without changing training."""
+    config = getattr(args, "alignment_diagnostics", None) or {}
+    if not bool(config.get("enabled", False)):
+        return None
+    output_subdir = config.get("output_subdir", "alignment_diagnostics")
+    output_dir = Path(args.output_dir) / output_subdir
+    output_dir.mkdir(parents=True, exist_ok=True)
+    n_sample = int(args.n_sample)
+    softmax_temperatures = [
+        float(value)
+        for value in config.get(
+            "softmax_temperatures", [0.5, 0.75, 1.0, 1.5, 2.0]
+        )
+    ]
+    return {
+        "output_dir": output_dir,
+        "epoch": int(epoch),
+        "softmax_temperatures": softmax_temperatures,
+        "p12_diagonal_quality": torch.full((n_sample,), float("nan")),
+        "p21_diagonal_quality": torch.full((n_sample,), float("nan")),
+        "p12_batch_diagonal_mean": torch.full((n_sample,), float("nan")),
+        "p12_relative_diagonal_quality": torch.full((n_sample,), float("nan")),
+        "p12_softmax_relative_quality": {
+            str(temperature): torch.full((n_sample,), float("nan"))
+            for temperature in softmax_temperatures
+        },
+        "batch_diagonal_mean": torch.full((n_sample,), float("nan")),
+        "relative_diagonal_quality": torch.full((n_sample,), float("nan")),
+        "gw_executed": torch.zeros(n_sample, dtype=torch.bool),
+        "prior_locked": torch.zeros(n_sample, dtype=torch.bool),
+        "observed": torch.zeros(n_sample, dtype=torch.bool),
+        "id1": torch.full((n_sample,), -1, dtype=torch.long),
+        "id2": torch.full((n_sample,), -1, dtype=torch.long),
+        "actual_aligned": torch.full((n_sample,), -1, dtype=torch.int8),
+    }
+
+
+
+
+def _record_alignment_batch(
+    diagnostics,
+    indices,
+    id1,
+    id2,
+    p12,
+    p21,
+    *,
+    gw_executed,
+    prior_locked,
+):
+    """Store only detached batch-level observations indexed by global sample id."""
+    global_indices = indices.detach().cpu().long()
+    first_ids = id1.detach().cpu().long()
+    second_ids = id2.detach().cpu().long()
+    diagnostics["observed"][global_indices] = True
+    diagnostics["id1"][global_indices] = first_ids
+    diagnostics["id2"][global_indices] = second_ids
+    diagnostics["actual_aligned"][global_indices] = (
+        first_ids == second_ids
+    ).to(torch.int8)
+    diagnostics["gw_executed"][global_indices] = bool(gw_executed)
+    diagnostics["prior_locked"][global_indices] = bool(prior_locked)
+    if p12 is not None and p21 is not None:
+        p12_quality = p12.detach().diagonal().cpu().float()
+        p21_quality = p21.detach().diagonal().cpu().float()
+        diagonal_quality = 0.5 * (p12_quality + p21_quality)
+        batch_mean = diagonal_quality.mean()
+        p12_batch_mean = p12_quality.mean()
+        diagnostics["p12_diagonal_quality"][global_indices] = p12_quality
+        diagnostics["p21_diagonal_quality"][global_indices] = p21_quality
+        diagnostics["p12_batch_diagonal_mean"][global_indices] = p12_batch_mean
+        diagnostics["p12_relative_diagonal_quality"][global_indices] = (
+            p12_quality / (p12_batch_mean + 1.0e-12)
+        )
+        for temperature, history in diagnostics[
+            "p12_softmax_relative_quality"
+        ].items():
+            logits = torch.log(p12_quality.clamp_min(1.0e-12)) / float(temperature)
+            history[global_indices] = torch.softmax(logits, dim=0) * len(p12_quality)
+        diagnostics["batch_diagonal_mean"][global_indices] = batch_mean
+        diagnostics["relative_diagonal_quality"][global_indices] = (
+            diagonal_quality / (batch_mean + 1.0e-12)
+        )
+
+
+def _save_alignment_diagnostics(diagnostics, epoch, args):
+    """Write one immutable epoch record for offline correspondence analysis."""
+    record = {
+        key: value
+        for key, value in diagnostics.items()
+        if key not in {"output_dir", "epoch"}
+    }
+    record.update(
+        {
+            "epoch": int(epoch),
+            "dataset": str(args.dataset),
+            "m_ratio": float(args.m_ratio),
+            "seed": None if args.seed is None else int(args.seed),
+            "batch_size": int(args.batch_size),
+            "steps": int(args.steps),
+            "step_size": float(args.step_size),
+            "solver": dict(args.solver),
+            "prior_gate": dict(getattr(args, "prior_gate", None) or {}),
+        }
+    )
+    output_path = diagnostics["output_dir"] / "epoch_{:04d}.pt".format(epoch)
+    torch.save(record, output_path)
 
 def calculate_dist(infolist, samples, idx, args):
     emp_dist = infolist.get_Buffer()

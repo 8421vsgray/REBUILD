@@ -41,4 +41,4 @@ num_runs: 1
 solver:
   backend: fastnewton
   relative_tol: 0.001
-  max_iter: 50
+  max_iter: 200

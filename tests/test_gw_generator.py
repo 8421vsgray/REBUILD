@@ -8,6 +8,7 @@ from pseudolabel.gw import (
     generate_bidirectional_gw_targets,
     generate_gw_targets,
     gw_gradient,
+    pointwise_gradient,
     projector_from_solver_config,
     relation_matrix,
 )
@@ -163,6 +164,48 @@ class GWGeneratorTests(unittest.TestCase):
         self.assertEqual(len(first.candidates), 2)
         self.assertEqual(len(second.candidates), 3)
         self.assertFalse(torch.allclose(first.candidates[0], second.candidates[0]))
+
+    def test_pointwise_gradient_is_used_as_fixed_projection_direction(self):
+        torch.manual_seed(47)
+        source = torch.randn(7, 4, dtype=torch.float64)
+        target = torch.randn(7, 4, dtype=torch.float64)
+        projector = RecordingProjector()
+        pseudo_labels, diagnostics = generate_gw_targets(
+            source,
+            target,
+            {
+                "init": "diagonal",
+                "steps": 1,
+                "step_size": 0.05,
+                "transport_gradient": "pointwise",
+            },
+            projector,
+        )
+        expected = torch.eye(7, dtype=torch.float64) / 7.0
+        expected = expected - 0.05 * pointwise_gradient(source, target)
+        torch.testing.assert_close(
+            projector.candidates[0], expected, atol=1e-10, rtol=1e-10
+        )
+        self.assertEqual(diagnostics["transport_gradient"], "pointwise")
+        self.assertFalse(pseudo_labels.requires_grad)
+
+    def test_pointwise_gradient_rejects_mismatched_feature_dimensions(self):
+        with self.assertRaises(ValueError):
+            pointwise_gradient(torch.randn(7, 4), torch.randn(7, 5))
+
+    def test_unknown_transport_gradient_fails_explicitly(self):
+        with self.assertRaises(ValueError):
+            generate_gw_targets(
+                torch.randn(7, 4),
+                torch.randn(7, 4),
+                {
+                    "init": "diagonal",
+                    "steps": 1,
+                    "step_size": 0.05,
+                    "transport_gradient": "unknown",
+                },
+                RecordingProjector(),
+            )
 
     def test_solver_parameters_are_explicitly_constructed(self):
         projector = projector_from_solver_config(

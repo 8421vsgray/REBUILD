@@ -8,7 +8,7 @@ L2norm = nn.functional.normalize
 
 class CorreGenBaselineModel(torch.nn.Module):
     def __init__(self, n_views, layer_dims, temperature, n_classes, drop_rate=0.5,
-                    beta=0.15, reg=0.05, rho=0.2):
+                    beta=0.15, reg=0.05, rho=0.2, target_drop_rate=None):
         super(CorreGenBaselineModel, self).__init__()
         self.n_views = n_views
         self.n_classes = n_classes
@@ -16,11 +16,19 @@ class CorreGenBaselineModel(torch.nn.Module):
         self.reg = reg
         self.rho = rho
         self.temperature = temperature
+        if target_drop_rate is None:
+            target_drop_rate = drop_rate
+        if not 0.0 <= float(target_drop_rate) <= 1.0:
+            raise ValueError("target_drop_rate must be in [0, 1]")
+
 
         self.online_encoder = nn.ModuleList(
             [FCN(layer_dims[i], drop_out=drop_rate) for i in range(n_views)]
         )
         self.target_encoder = copy.deepcopy(self.online_encoder)
+        for module in self.target_encoder.modules():
+            if isinstance(module, nn.Dropout):
+                module.p = float(target_drop_rate)
 
         for param_q, param_k in zip(
             self.online_encoder.parameters(), self.target_encoder.parameters()
