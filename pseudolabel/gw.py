@@ -73,6 +73,32 @@ def relation_matrix(features: torch.Tensor) -> torch.Tensor:
     return relation
 
 
+@torch.no_grad()
+def pointwise_gradient(
+    source_features: torch.Tensor,
+    target_features: torch.Tensor,
+) -> torch.Tensor:
+    """Return the fixed cross-view cosine-distance gradient.
+
+    This is the pointwise ablation counterpart to gw_gradient. The returned
+    matrix is 1 - cosine_similarity(source_i, target_j) and is therefore the
+    gradient of the linear pointwise matching objective with respect to the
+    transport plan. Features are normalized exactly as in relation_matrix;
+    no transport or model gradients are propagated.
+    """
+    batch_size = _require_feature_pair(source_features, target_features)
+    if source_features.shape[1] != target_features.shape[1]:
+        raise ValueError(
+            "source and target feature dimensions must match for pointwise similarity"
+        )
+    source_normalized = F.normalize(source_features.detach(), dim=1)
+    target_normalized = F.normalize(target_features.detach(), dim=1)
+    gradient = (1.0 - source_normalized @ target_normalized.t()).clamp(0.0, 2.0)
+    if gradient.shape != (batch_size, batch_size) or not torch.isfinite(gradient).all():
+        raise ValueError("pointwise gradient contains invalid values")
+    return gradient
+
+
 def gw_gradient(
     source_relation: torch.Tensor,
     target_relation: torch.Tensor,
@@ -104,7 +130,7 @@ def _projector_parameters(projector: TransportProjector) -> dict[str, Any]:
     }
 
 
-def _validate_gw_config(config: Mapping[str, Any]) -> tuple[str, int, float]:
+def _validate_gw_config(config: Mapping[str, Any]) -> tuple[str, int, float, str]:
     init = str(config.get("init", "diagonal")).lower()
     if init != "diagonal":
         raise ValueError("GW generator currently supports init=diagonal only")
@@ -117,7 +143,14 @@ def _validate_gw_config(config: Mapping[str, Any]) -> tuple[str, int, float]:
     step_size = float(step_size)
     if step_size < 0.0:
         raise ValueError("step_size must be non-negative")
-    return init, steps, step_size
+    transport_gradient = str(
+        config.get("transport_gradient", "structural")
+    ).lower()
+    if transport_gradient not in {"structural", "pointwise"}:
+        raise ValueError(
+            "transport_gradient must be structural or pointwise"
+        )
+    return init, steps, step_size, transport_gradient
 
 
 @torch.no_grad()
@@ -129,14 +162,20 @@ def generate_gw_targets(
 ) -> tuple[torch.Tensor, dict[str, Any]]:
     """Generate one detached row-stochastic GW pseudo-label matrix."""
     batch_size = _require_feature_pair(source_features, target_features)
-    _, steps, step_size = _validate_gw_config(gw_config)
+    _, steps, step_size, transport_gradient = _validate_gw_config(gw_config)
     if not isinstance(projector, TransportProjector):
         raise TypeError("projector must implement TransportProjector")
 
     source = source_features.detach()
     target = target_features.detach()
-    source_relation = relation_matrix(source)
-    target_relation = relation_matrix(target)
+    if transport_gradient == "structural":
+        source_relation = relation_matrix(source)
+        target_relation = relation_matrix(target)
+        fixed_gradient = None
+    else:
+        source_relation = None
+        target_relation = None
+        fixed_gradient = pointwise_gradient(source, target)
     prior_gate_precheck = bool(gw_config.get("prior_gate_precheck", False))
     raw_offdiag_tol = float(gw_config.get("raw_offdiag_tol", 1.0e-3))
     marginal = torch.full(
@@ -152,7 +191,10 @@ def generate_gw_targets(
     step_diagnostics: list[GWStepDiagnostics] = []
     total_projection_seconds = 0.0
     for step in range(steps):
-        gradient = gw_gradient(source_relation, target_relation, transport)
+        if transport_gradient == "structural":
+            gradient = gw_gradient(source_relation, target_relation, transport)
+        else:
+            gradient = fixed_gradient
         candidate = transport - step_size * gradient
         if step == 0 and prior_gate_precheck:
             positive_candidate = candidate.clamp_min(0.0)
@@ -172,6 +214,7 @@ def generate_gw_targets(
                     "batch_size": batch_size,
                     "steps": steps,
                     "step_size": step_size,
+                    "transport_gradient": transport_gradient,
                     "solver_parameters": _projector_parameters(projector),
                     "row_abs_residual": 0.0,
                     "col_abs_residual": 0.0,
@@ -265,6 +308,7 @@ def generate_gw_targets(
         "batch_size": batch_size,
         "steps": steps,
         "step_size": step_size,
+        "transport_gradient": transport_gradient,
         "solver_parameters": _projector_parameters(projector),
         "row_abs_residual": max(
             (item.row_abs_residual for item in step_diagnostics), default=0.0

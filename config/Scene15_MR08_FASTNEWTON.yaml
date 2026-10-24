@@ -33,4 +33,4 @@ step_size: 0.05
 solver:
   backend: fastnewton
   relative_tol: 1.0e-4
-  max_iter: 50
+  max_iter: 200
