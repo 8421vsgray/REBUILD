@@ -11,7 +11,7 @@ from model import CorreGenBaselineModel
 
 
 class TinyViews(Dataset):
-    def __init__(self, size=14):
+    def __init__(self, size=21):
         generator = torch.Generator().manual_seed(20261103)
         self.views = [
             torch.randn(size, 3, generator=generator),
@@ -35,7 +35,7 @@ class TinyViews(Dataset):
 
 
 class PriorGateFallbackTests(unittest.TestCase):
-    def test_later_recovered_low_diffusion_locks_to_diagonal(self):
+    def test_gate_uses_recovered_mass_not_failure_alone(self):
         torch.manual_seed(20261103)
         model = CorreGenBaselineModel(
             n_views=2,
@@ -45,7 +45,7 @@ class PriorGateFallbackTests(unittest.TestCase):
             drop_rate=0.0,
         )
         optimizer = torch.optim.SGD(model.parameters(), lr=1.0e-3)
-        loader = DataLoader(TinyViews(size=14), batch_size=7, shuffle=False)
+        loader = DataLoader(TinyViews(size=21), batch_size=7, shuffle=False)
         args = SimpleNamespace(
             algorithm="stride_gw",
             print_this_epoch=False,
@@ -96,9 +96,10 @@ class PriorGateFallbackTests(unittest.TestCase):
             "generate_bidirectional_gw_targets",
             side_effect=[
                 generator_result(diffused),
+                generator_result(diffused, projection_failed=True),
                 generator_result(recovered_low_diffusion, projection_failed=True),
             ],
-        ):
+        ) as generate_targets:
             train_one_epoch(
                 model,
                 loader,
@@ -112,11 +113,18 @@ class PriorGateFallbackTests(unittest.TestCase):
                 projector=object(),
             )
 
-        self.assertEqual(len(captured_targets), 2)
+        self.assertEqual(len(captured_targets), 3)
         torch.testing.assert_close(captured_targets[0][0], diffused)
         torch.testing.assert_close(captured_targets[0][1], diffused)
-        torch.testing.assert_close(captured_targets[1][0], identity)
-        torch.testing.assert_close(captured_targets[1][1], identity)
+        # A solver failure alone does not lock if the returned fallback diffused enough.
+        torch.testing.assert_close(captured_targets[1][0], diffused)
+        torch.testing.assert_close(captured_targets[1][1], diffused)
+        # The last-valid fallback is gated only when its measured mass is low.
+        torch.testing.assert_close(captured_targets[2][0], identity)
+        torch.testing.assert_close(captured_targets[2][1], identity)
+        self.assertEqual(generate_targets.call_count, 3)
+        for call in generate_targets.call_args_list:
+            self.assertNotIn("prior_gate_precheck", call.args[2])
 
 
 if __name__ == "__main__":

@@ -213,6 +213,11 @@ class TrainingIntegrationTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             main_train._validate_standard_config(invalid_mass)
 
+        raw_precheck = copy.deepcopy(config)
+        raw_precheck["prior_gate"]["raw_offdiag_tol"] = 0.1
+        with self.assertRaisesRegex(ValueError, "raw_offdiag_tol"):
+            main_train._validate_standard_config(raw_precheck)
+
     def test_stride_engine_generates_gw_targets_and_updates_model(self):
         torch.manual_seed(20261020)
         model = CorreGenBaselineModel(

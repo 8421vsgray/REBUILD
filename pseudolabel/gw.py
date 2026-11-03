@@ -180,8 +180,6 @@ def generate_gw_targets(
         source_relation = None
         target_relation = None
         fixed_gradient = pointwise_gradient(source, target)
-    prior_gate_precheck = bool(gw_config.get("prior_gate_precheck", False))
-    raw_offdiag_tol = float(gw_config.get("raw_offdiag_tol", 1.0e-3))
     marginal = torch.full(
         (batch_size,),
         1.0 / float(batch_size),
@@ -203,35 +201,6 @@ def generate_gw_targets(
         else:
             gradient = fixed_gradient
         candidate = transport - step_size * gradient
-        if step == 0 and prior_gate_precheck:
-            positive_candidate = candidate.clamp_min(0.0)
-            positive_total = float(positive_candidate.sum().item())
-            if positive_total > 0.0:
-                raw_offdiag_mass = 1.0 - float(
-                    positive_candidate.diagonal().sum().item() / positive_total
-                )
-            else:
-                raw_offdiag_mass = 0.0
-            if raw_offdiag_mass <= raw_offdiag_tol:
-                pseudo_labels = (transport * float(batch_size)).detach()
-                return pseudo_labels, {
-                    "status": "prior_gate",
-                    "prior_gate": True,
-                    "prior_gate_reason": "low_raw_diffusion",
-                    "batch_size": batch_size,
-                    "steps": steps,
-                    "step_size": step_size,
-                    "transport_gradient": transport_gradient,
-                    "solver_parameters": _projector_parameters(projector),
-                    "row_abs_residual": 0.0,
-                    "col_abs_residual": 0.0,
-                    "row_relative_residual": 0.0,
-                    "col_relative_residual": 0.0,
-                    "non_diagonal_mass": 0.0,
-                    "raw_offdiag_mass": raw_offdiag_mass,
-                    "projection_seconds": 0.0,
-                    "step_diagnostics": [],
-                }
         projection_start = time.perf_counter()
         try:
             result = projector.project(candidate, marginal, marginal)

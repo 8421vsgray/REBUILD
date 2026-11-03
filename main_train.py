@@ -85,7 +85,6 @@ PRIOR_GATE_CONFIG_FIELDS = {
     "lock",
     "lockmass",
     "offdiag_tol",
-    "raw_offdiag_tol",
     "on_projection_failure",
 }
 ALIGNMENT_DIAGNOSTIC_FIELDS = {
@@ -369,7 +368,7 @@ def _validate_standard_config(configs):
             raise ValueError("prior_gate.lock must be boolean")
         if "lockmass" in prior_gate and float(prior_gate["lockmass"]) < 0.0:
             raise ValueError("prior_gate.lockmass must be non-negative")
-        for field in ("offdiag_tol", "raw_offdiag_tol"):
+        for field in ("offdiag_tol",):
             if field in prior_gate and float(prior_gate[field]) < 0.0:
                 raise ValueError("prior_gate.{} must be non-negative".format(field))
         if "on_projection_failure" in prior_gate and not isinstance(

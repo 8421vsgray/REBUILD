@@ -49,15 +49,11 @@ def train_one_epoch(
             "lockmass", prior_gate_config.get("offdiag_tol", 1.0e-3)
         )
     )
-    prior_gate_raw_offdiag_tol = float(
-        prior_gate_config.get("raw_offdiag_tol", prior_gate_offdiag_tol)
-    )
     prior_gate_on_failure = bool(
         prior_gate_config.get("on_projection_failure", True)
     )
     epoch_prior_locked = False
     epoch_prior_lock_reason = None
-    epoch_prior_gate_decided = False
     alignment_diagnostics = _start_alignment_diagnostics(args, epoch)
     if is_stride_gw and projector is None:
         projector = projector_from_solver_config(args.solver)
@@ -103,17 +99,11 @@ def train_one_epoch(
                                         "transport_gradient": getattr(
                                             args, "transport_gradient", "structural"
                                         ),
-                                        "prior_gate_precheck": (
-                                            prior_gate_enabled
-                                            and not epoch_prior_gate_decided
-                                        ),
-                                        "raw_offdiag_tol": prior_gate_raw_offdiag_tol,
                                     },
                                     projector,
                                 )
                         except GWProjectionFailure as error:
                             if prior_gate_enabled and prior_gate_on_failure:
-                                epoch_prior_gate_decided = True
                                 epoch_prior_locked = True
                                 epoch_prior_lock_reason = "projection_failure"
                                 inter_targets = [identity, identity]
@@ -133,10 +123,6 @@ def train_one_epoch(
                             p21_offdiag = float(
                                 gw_diagnostics["P21"]["non_diagonal_mass"]
                             )
-                            prior_gate_triggered = bool(
-                                gw_diagnostics["P12"].get("prior_gate", False)
-                                or gw_diagnostics["P21"].get("prior_gate", False)
-                            )
                             for direction in ("P12", "P21"):
                                 direction_diagnostics = gw_diagnostics[direction]
                                 if direction_diagnostics.get("projection_failed", False):
@@ -151,19 +137,11 @@ def train_one_epoch(
                                         )
                                     )
                             if prior_gate_enabled:
-                                if not epoch_prior_gate_decided:
-                                    epoch_prior_gate_decided = True
-                                if not epoch_prior_locked and (
-                                    prior_gate_triggered
-                                    or min(p12_offdiag, p21_offdiag)
-                                    <= prior_gate_offdiag_tol
-                                ):
+                                if not epoch_prior_locked and min(
+                                    p12_offdiag, p21_offdiag
+                                ) <= prior_gate_offdiag_tol:
                                     epoch_prior_locked = True
-                                    epoch_prior_lock_reason = (
-                                        "low_raw_diffusion"
-                                        if prior_gate_triggered
-                                        else "low_diffusion"
-                                    )
+                                    epoch_prior_lock_reason = "low_diffusion"
                                     print(
                                         "Epoch {} prior_gate=lock reason={} "
                                         "p12_offdiag={:.6g} p21_offdiag={:.6g} "
