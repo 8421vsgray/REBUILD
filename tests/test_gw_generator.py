@@ -205,14 +205,56 @@ class GWGeneratorTests(unittest.TestCase):
                 {"backend": "drot", "rho": 3.0, "eps": 1e-7, "max_iter": 1234}
             )
 
-    def test_projection_failure_is_not_replaced(self):
-        with self.assertRaises(GWProjectionFailure):
-            generate_gw_targets(
-                torch.randn(7, 4),
-                torch.randn(7, 4),
-                self.config(steps=1),
-                FailingProjector(),
-            )
+    def test_first_projection_failure_returns_diagonal_last_valid(self):
+        pseudo_labels, diagnostics = generate_gw_targets(
+            torch.randn(7, 4),
+            torch.randn(7, 4),
+            self.config(steps=1),
+            FailingProjector(),
+        )
+        torch.testing.assert_close(pseudo_labels, torch.eye(7))
+        self.assertEqual(diagnostics["status"], "recovered_last_valid")
+        self.assertTrue(diagnostics["projection_failed"])
+        self.assertTrue(diagnostics["used_last_valid"])
+        self.assertEqual(diagnostics["failed_step"], 0)
+        self.assertEqual(diagnostics["last_valid_step"], -1)
+        self.assertAlmostEqual(diagnostics["non_diagonal_mass"], 0.0, places=7)
+
+    def test_midway_projection_failure_returns_last_feasible_transport(self):
+        class OneSuccessThenFailingProjector(TransportProjector):
+            def __init__(self):
+                self.calls = 0
+
+            def project(self, candidate, row_marginal, col_marginal):
+                self.calls += 1
+                if self.calls > 1:
+                    return FailingProjector().project(
+                        candidate, row_marginal, col_marginal
+                    )
+                size = candidate.shape[0]
+                identity = torch.eye(size, dtype=candidate.dtype, device=candidate.device)
+                shifted = torch.roll(identity, shifts=1, dims=1)
+                plan = (0.8 * identity + 0.2 * shifted) / float(size)
+                diagnostics = ProjectionDiagnostics(
+                    "success", 1, float(plan.min()), 0.0, 0.0, 0.0, 0.0
+                )
+                return ProjectionResult(plan, diagnostics)
+
+        projector = OneSuccessThenFailingProjector()
+        pseudo_labels, diagnostics = generate_gw_targets(
+            torch.randn(7, 4),
+            torch.randn(7, 4),
+            self.config(steps=3),
+            projector,
+        )
+        identity = torch.eye(7)
+        expected = 0.8 * identity + 0.2 * torch.roll(identity, shifts=1, dims=1)
+        torch.testing.assert_close(pseudo_labels, expected)
+        self.assertEqual(diagnostics["status"], "recovered_last_valid")
+        self.assertEqual(diagnostics["failed_step"], 1)
+        self.assertEqual(diagnostics["last_valid_step"], 0)
+        self.assertAlmostEqual(diagnostics["non_diagonal_mass"], 0.2, places=6)
+        self.assertEqual(len(diagnostics["step_diagnostics"]), 1)
 
     def test_batch_sizes_do_not_assume_512(self):
         for batch_size in (7, 32, 512):

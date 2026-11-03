@@ -137,9 +137,23 @@ def train_one_epoch(
                                 gw_diagnostics["P12"].get("prior_gate", False)
                                 or gw_diagnostics["P21"].get("prior_gate", False)
                             )
-                            if prior_gate_enabled and not epoch_prior_gate_decided:
-                                epoch_prior_gate_decided = True
-                                if (
+                            for direction in ("P12", "P21"):
+                                direction_diagnostics = gw_diagnostics[direction]
+                                if direction_diagnostics.get("projection_failed", False):
+                                    print(
+                                        "Epoch {} GW projection recovered direction={} "
+                                        "failed_step={} last_valid_step={} offdiag={:.6g}".format(
+                                            epoch,
+                                            direction,
+                                            direction_diagnostics.get("failed_step"),
+                                            direction_diagnostics.get("last_valid_step"),
+                                            direction_diagnostics["non_diagonal_mass"],
+                                        )
+                                    )
+                            if prior_gate_enabled:
+                                if not epoch_prior_gate_decided:
+                                    epoch_prior_gate_decided = True
+                                if not epoch_prior_locked and (
                                     prior_gate_triggered
                                     or min(p12_offdiag, p21_offdiag)
                                     <= prior_gate_offdiag_tol

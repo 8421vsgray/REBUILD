@@ -159,7 +159,12 @@ def generate_gw_targets(
     gw_config: Mapping[str, Any],
     projector: TransportProjector,
 ) -> tuple[torch.Tensor, dict[str, Any]]:
-    """Generate one detached row-stochastic GW pseudo-label matrix."""
+    """Generate detached GW labels, preserving the last feasible transport.
+
+    On a failed projection step, return the latest transport that passed
+    feasibility validation and expose the failed step in diagnostics. The
+    caller then decides whether its diffusion mass warrants diagonal lock.
+    """
     batch_size = _require_feature_pair(source_features, target_features)
     _, steps, step_size, transport_gradient = _validate_gw_config(gw_config)
     if not isinstance(projector, TransportProjector):
@@ -188,6 +193,9 @@ def generate_gw_targets(
     ) * marginal[0]
 
     step_diagnostics: list[GWStepDiagnostics] = []
+    last_valid_step = -1  # T0 is the valid diagonal transport prior.
+    failed_step = None
+    failure_reason = None
     total_projection_seconds = 0.0
     for step in range(steps):
         if transport_gradient == "structural":
@@ -228,42 +236,42 @@ def generate_gw_targets(
         try:
             result = projector.project(candidate, marginal, marginal)
         except Exception as error:
-            raise GWProjectionFailure(
-                "GW projection raised at step {}: {}".format(step, error)
-            ) from error
+            failed_step = step
+            failure_reason = "projector_exception: {}: {}".format(
+                type(error).__name__, error
+            )
+            total_projection_seconds += time.perf_counter() - projection_start
+            break
         projection_seconds = time.perf_counter() - projection_start
+        total_projection_seconds += projection_seconds
         diagnostics = result.diagnostics
         if diagnostics.status not in {"success", "feasible_only"}:
-            raise GWProjectionFailure(
-                "GW projection status={} at step {}".format(
-                    diagnostics.status, step
-                )
-            )
-        transport = result.plan.detach().to(
+            failed_step = step
+            failure_reason = "solver_status: {}".format(diagnostics.status)
+            break
+        projected_transport = result.plan.detach().to(
             device=source.device, dtype=source.dtype
         )
-        if (transport < -1e-6).any():
-            raise GWProjectionFailure(
-                "GW projection returned materially negative mass at step {}".format(
-                    step
-                )
-            )
+        if (projected_transport < -1e-6).any():
+            failed_step = step
+            failure_reason = "materially_negative_mass"
+            break
         # Backends are allowed a small floating-point feasibility tolerance;
         # expose mathematically valid nonnegative pseudo-labels downstream.
-        transport = transport.clamp_min(0.0)
+        projected_transport = projected_transport.clamp_min(0.0)
         feasibility = validate_transport_plan(
-            transport,
+            projected_transport,
             marginal,
             marginal,
             atol=1e-6,
             rtol=1e-3,
         )
         if feasibility.status != "success":
-            raise GWProjectionFailure(
-                "GW projection failed post-validation at step {}: {}".format(
-                    step, feasibility.status
-                )
-            )
+            failed_step = step
+            failure_reason = "post_validation: {}".format(feasibility.status)
+            break
+        transport = projected_transport
+        last_valid_step = step
         pseudo_labels = transport * float(batch_size)
         off_diagonal_mass = 1.0 - float(pseudo_labels.diagonal().mean().item())
         step_diagnostics.append(
@@ -283,7 +291,6 @@ def generate_gw_targets(
                 ),
             )
         )
-        total_projection_seconds += projection_seconds
 
     pseudo_labels = (transport * float(batch_size)).detach()
     ones = torch.ones(batch_size, dtype=source.dtype, device=source.device)
@@ -292,9 +299,15 @@ def generate_gw_targets(
     if not torch.allclose(pseudo_labels.sum(dim=1), ones, atol=1e-5, rtol=1e-3):
         raise GWProjectionFailure("generated pseudo-label rows are not normalized")
 
+    recovered_last_valid = failure_reason is not None
     diagonal_mass = float(pseudo_labels.diagonal().mean().item())
     diagnostics = {
-        "status": "success",
+        "status": "recovered_last_valid" if recovered_last_valid else "success",
+        "projection_failed": recovered_last_valid,
+        "used_last_valid": recovered_last_valid,
+        "failed_step": failed_step,
+        "last_valid_step": last_valid_step,
+        "failure_reason": failure_reason,
         "prior_gate": False,
         "prior_gate_reason": None,
         "raw_offdiag_mass": None,
